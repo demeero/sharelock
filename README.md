@@ -13,7 +13,8 @@ The browser encrypts every item before upload. The SQLite database stores only a
 - multiple text or file items in one share;
 - fixed expiration and optional burn-after-first-open;
 - a separate revoke capability returned only at creation time;
-- a small terminal-style Web UI, compiled to static assets and embedded in the Go binary.
+- a small terminal-style Web UI, compiled to static assets and embedded in the Go binary;
+- liveness and readiness probes for container orchestrators.
 
 It intentionally does not include accounts, teams, RBAC, search, revisions, audit trails, password vaulting, secret rotation, or external infrastructure.
 
@@ -201,6 +202,36 @@ ENV_FILE=/etc/sharelock/sharelock.env ./sharelock
 ```
 
 Non-empty environment variables already supplied to the process take precedence over entries in either file, so deployments can override individual values without modifying the file. Do not commit `.env` files containing deployment-specific values.
+
+## Health checks
+
+Two unauthenticated probes are served next to the Web UI, outside the `/api` prefix and outside the OpenAPI document. They exist for orchestrators, not for API clients, and neither one reveals anything about stored shares.
+
+| Endpoint        | Meaning                                                             | Status codes                                                          |
+| --------------- | ------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| `/health/live`  | The process is running. Touches no dependency.                      | `200` always                                                          |
+| `/health/ready` | The process can serve traffic, which requires a reachable database. | `200` when the database responds, `503` when it does not or times out |
+
+Both answer `GET` with `{"status":"ok"}` or `{"status":"unavailable"}`. The readiness database check is bounded by an internal two-second timeout, so a stalled database fails the probe instead of holding it open.
+
+```sh
+curl -fsS http://localhost:8080/health/ready
+```
+
+Use liveness to decide whether to restart the process and readiness to decide whether to send it traffic. Restarting on a failing readiness probe is the wrong reaction here: the database is a local SQLite file, and a restart will not make it reachable again.
+
+Docker:
+
+```sh
+docker run -d \
+  --name sharelock \
+  -p 8080:8080 \
+  -v sharelock-data:/data \
+  --health-cmd 'wget -q -O /dev/null http://localhost:8080/health/ready || exit 1' \
+  --health-interval 30s \
+  --health-start-period 5s \
+  demeero/sharelock:latest
+```
 
 ## Security boundary
 

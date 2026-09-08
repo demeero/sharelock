@@ -37,7 +37,7 @@ func TestShareHTTPFlow(t *testing.T) {
 	mux := http.NewServeMux()
 	api := humago.New(mux, huma.DefaultConfig("test", "1.0.0"))
 	share.New(cfg.Share, huma.NewGroup(api, "/api/v1/shares"), db)
-	server := NewServer(mux, cfg)
+	server := NewServer(mux, cfg, db)
 
 	for _, path := range []string{"/", "/s/" + strings.Repeat("a", 43)} {
 		response := httptest.NewRecorder()

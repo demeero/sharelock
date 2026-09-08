@@ -22,15 +22,20 @@ type Server struct {
 	cfg     config.Config
 }
 
-// NewServer configures routes, templates, static assets, and security headers.
-func NewServer(mux *http.ServeMux, cfg config.Config) *Server {
+// NewServer configures routes, templates, static assets, health probes, and
+// security headers.
+func NewServer(mux *http.ServeMux, cfg config.Config, db pinger) *Server {
 	server := &Server{
 		cfg: cfg,
 	}
 
+	probes := health{db: db}
+
 	mux.Handle("GET /assets/", http.StripPrefix("/assets/", http.FileServerFS(mustSubFS("assets"))))
 	mux.HandleFunc("GET /", server.index)
 	mux.HandleFunc("GET /s/{id}", server.reader)
+	mux.HandleFunc("GET /health/live", probes.live)
+	mux.HandleFunc("GET /health/ready", probes.ready)
 	server.handler = recoverMiddleware(server.securityHeaders(mux))
 
 	return server

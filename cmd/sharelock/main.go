@@ -46,7 +46,7 @@ func main() {
 
 	shareService := share.New(cfg.Share, api.Shares, db)
 
-	server := NewServer(mux, cfg)
+	server := NewServer(mux, cfg, db)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
