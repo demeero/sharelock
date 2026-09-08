@@ -1,0 +1,54 @@
+@layer base, utils, components;
+
+@import "@fontsource-variable/jetbrains-mono";
+@import "@webtui/css/base.css";
+@import "@webtui/css/utils/box.css";
+@import "@webtui/css/components/accordion.css";
+@import "@webtui/css/components/badge.css";
+@import "@webtui/css/components/button.css";
+@import "@webtui/css/components/dialog.css";
+@import "@webtui/css/components/input.css";
+@import "@webtui/css/components/mark.css";
+@import "@webtui/css/components/pre.css";
+@import "@webtui/css/components/radio.css";
+@import "@webtui/css/components/separator.css";
+@import "@webtui/css/components/spinner.css";
+@import "@webtui/css/components/switch.css";
+@import "@webtui/css/components/textarea.css";
+@import "@webtui/css/components/typography.css";
+@import "@webtui/plugin-declarative-layout";
+@import "@webtui/theme-catppuccin";
+
+@font-face {
+  font-family: "Symbols Nerd Font";
+  src: url("../assets/fonts/SymbolsNerdFont-Regular.woff2") format("woff2");
+  font-display: block;
+  font-style: normal;
+  font-weight: 400;
+}
+
+@layer base {
+  :root {
+    color-scheme: dark;
+    --font-family: "JetBrains Mono Variable", "Symbols Nerd Font", monospace;
+  }
+
+  body {
+    min-block-size: 100dvb;
+  }
+}
+
+@layer utils {
+  [is-~="app-shell"] {
+    flex-direction: column;
+    inline-size: calc(100% - 2ch);
+    max-inline-size: 104ch;
+    min-block-size: 100dvb;
+    margin-inline: auto;
+    padding-block: 1lh 2lh;
+  }
+
+  [is-~="row"][wrap-] {
+    flex-wrap: wrap;
+  }
+}

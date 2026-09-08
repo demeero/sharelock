@@ -1,0 +1,275 @@
+version: "3"
+
+vars:
+  APP_NAME: '{{default "sharelock" .APP_NAME}}'
+  DIST_DIR: '{{default "dist" .DIST_DIR}}'
+  GOLANGCI_DIR: .tools/bin
+  GOLANGCI: .tools/bin/golangci-lint
+  GOLANGCI_VERSION: 2.13.1
+  GOLANGCI_INSTALL_URL: https://raw.githubusercontent.com/golangci/golangci-lint/v{{.GOLANGCI_VERSION}}/install.sh
+  SQLITE3_DIR: .tools/bin
+  SQLITE3: .tools/bin/sqlite3
+  SQLITE3_VERSION: 3.53.4
+  SQLITE3_RELEASE: 3530400
+  SQLITE3_DOWNLOAD_YEAR: 2026
+  SQLITE3_DOWNLOAD_URL: https://www.sqlite.org/{{.SQLITE3_DOWNLOAD_YEAR}}
+  SCHEMA_EXPORT_PATH: testdata/schema.sql
+
+dotenv: [ ".env" ]
+
+tasks:
+  default:
+    desc: List available tasks
+    cmds:
+      - task --list
+    silent: true
+
+# =================Frontend=================
+
+  ui:install:
+    desc: Install locked frontend dependencies
+    dir: ./frontend
+    sources:
+      - package.json
+      - package-lock.json
+    generates:
+      - node_modules/.package-lock.json
+    cmds:
+      - npx --yes npm@12.0.2 ci
+
+  ui:build:
+    desc: Build production frontend assets
+    dir: ./frontend
+    deps: [ui:install]
+    cmds:
+      - npm run build
+
+  ui:dev:
+    desc: Start the Vite development server
+    dir: ./frontend
+    deps: [ui:install]
+    cmds:
+      - npm run dev
+
+  ui:generate:
+    desc: Regenerate the OpenAPI document and TypeScript client
+    dir: ./frontend
+    deps: [ui:install]
+    cmds:
+      - npm run generate:api
+
+  ui:fmt:
+    desc: Format frontend source files
+    dir: ./frontend
+    deps: [ui:install]
+    cmds:
+      - npm run format
+
+  ui:fmt:check:
+    desc: Check frontend formatting without changing files
+    dir: ./frontend
+    deps: [ui:install]
+    cmds:
+      - npm run format:check
+  ui:lint:
+    desc: Lint Svelte and TypeScript source files
+    dir: ./frontend
+    deps: [ui:install]
+    cmds:
+      - npm run lint
+
+  ui:lint:fix:
+    desc: Apply automatic frontend lint fixes
+    dir: ./frontend
+    deps: [ui:install]
+    cmds:
+      - npm run lint:fix
+
+  ui:check:
+    desc: Type-check Svelte and TypeScript source files
+    dir: ./frontend
+    deps: [ui:install]
+    cmds:
+      - npm run check
+
+# =========================================
+
+# =================Backend=================
+
+  back:ensure-golangci-lint:
+    internal: true
+    desc: Install the pinned golangci-lint binary when needed
+    status:
+      - test -x "{{.GOLANGCI}}" && test "$("{{.GOLANGCI}}" version --short 2>/dev/null)" = "{{.GOLANGCI_VERSION}}"
+    cmds:
+      - mkdir -p "{{.GOLANGCI_DIR}}"
+      - |
+        installer="$(mktemp)"
+        trap 'rm -f "$installer"' EXIT
+        curl -sSfL "{{.GOLANGCI_INSTALL_URL}}" -o "$installer"
+        sh "$installer" -b "{{.GOLANGCI_DIR}}" "v{{.GOLANGCI_VERSION}}"
+
+  back:fmt:
+    desc: Format Go source files with golangci-lint
+    deps: [back:ensure-golangci-lint]
+    cmds:
+      - "{{.GOLANGCI}} fmt -v"
+
+  back:fmt:check:
+    desc: Check Go formatting with golangci-lint
+    deps: [back:ensure-golangci-lint]
+    cmds:
+      - "{{.GOLANGCI}} fmt -v --diff"
+
+  back:lint:
+    desc: Run golangci-lint without changing source files
+    deps: [back:ensure-golangci-lint]
+    cmds:
+      - "{{.GOLANGCI}} version --short"
+      - "{{.GOLANGCI}} run -v ./..."
+
+  back:lint:fix:
+    desc: Run golangci-lint and apply safe fixes
+    deps: [back:ensure-golangci-lint]
+    cmds:
+      - "{{.GOLANGCI}} version --short"
+      - "{{.GOLANGCI}} run -v --fix ./..."
+
+  back:ensure-sqlite3:
+    internal: true
+    desc: Install the pinned sqlite3 CLI binary when needed
+    status:
+      - test -x "{{.SQLITE3}}" && test "$("{{.SQLITE3}}" -version | cut -d' ' -f1)" = "{{.SQLITE3_VERSION}}"
+    cmds:
+      - mkdir -p "{{.SQLITE3_DIR}}"
+      - |
+        set -e
+        case "$(uname -s)-$(uname -m)" in
+          Darwin-arm64) asset=osx-arm64 ;;
+          Darwin-x86_64) asset=osx-x64 ;;
+          Linux-x86_64) asset=linux-x64 ;;
+          *) echo "unsupported platform for sqlite3 download: $(uname -s)-$(uname -m)" >&2; exit 1 ;;
+        esac
+        workdir="$(mktemp -d)"
+        trap 'rm -rf "$workdir"' EXIT
+        archive="sqlite-tools-${asset}-{{.SQLITE3_RELEASE}}.zip"
+        curl -sSfL "{{.SQLITE3_DOWNLOAD_URL}}/${archive}" -o "$workdir/${archive}"
+        unzip -q -o "$workdir/${archive}" -d "$workdir"
+        install -m 0755 "$workdir/sqlite3" "{{.SQLITE3}}"
+
+  back:db:ddl:export:
+    desc: Export the SQLite schema DDL to testdata/schema.sql
+    deps: [back:ensure-sqlite3]
+    cmds:
+      - mkdir -p "$(dirname "{{.SCHEMA_EXPORT_PATH}}")"
+      - |
+        set -e
+        db="$(mktemp -u)"
+        trap 'rm -f "$db"' EXIT
+        for f in migration/migrations/*.up.sql; do
+          "{{.SQLITE3}}" "$db" < "$f"
+        done
+        "{{.SQLITE3}}" "$db" .schema > "{{.SCHEMA_EXPORT_PATH}}"
+
+  back:build:
+    desc: Build API binary
+    cmds:
+      - task: back:build:binary
+        vars:
+          BINARY_PATH: ./cmd/sharelock/...
+
+  back:test:
+    desc: Run tests.
+    cmds:
+      - go test -count 1 -race -v ./...
+
+  back:test:coverage:
+    desc: Run tests with coverage summary and HTML report.
+    cmds:
+      - mkdir -p .coverage
+      - go test -count 1 -coverprofile=.coverage/cover.out ./...
+      - go tool cover -func=.coverage/cover.out
+      - go tool cover -html=.coverage/cover.out -o .coverage/cover.html
+
+  back:check:
+    desc: Run formatting, linting and tests
+    cmds:
+      - task: back:fmt:check
+      - task: back:lint
+      - task: back:test
+
+  back:build:binary:
+    internal: true
+    vars:
+      GOOS: '{{.GOOS | default OS}}'
+      GOARCH: '{{.GOARCH | default ARCH}}'
+      VERSION:
+        sh: git describe --tags --always --dirty 2>/dev/null || echo "dev"
+      COMMIT:
+        sh: git rev-parse --short HEAD 2>/dev/null || echo "unknown"
+      BUILD_TIME:
+        sh: date -u '+%Y-%m-%dT%H:%M:%SZ'
+    cmds:
+      - mkdir -p "{{.DIST_DIR}}"
+      - GOOS={{.GOOS}} GOARCH={{.GOARCH}} go build -trimpath -ldflags "-X 'github.com/demeero/sharelock/internal/config.buildVersion={{.VERSION}}' -X 'github.com/demeero/sharelock/internal/config.buildTime={{.BUILD_TIME}}' -X 'github.com/demeero/sharelock/internal/config.commit={{.COMMIT}}'" -v -o "{{.DIST_DIR}}/{{.APP_NAME}}" ./cmd/sharelock
+
+  back:run:
+    desc: Run Sharelock with production frontend assets
+    cmds:
+      - go run ./cmd/sharelock
+# ==================================
+
+# =================Global=================
+  run:
+    desc: Build the frontend and run Sharelock
+    cmds:
+      - task: ui:build
+      - task: back:run
+
+  fmt:
+    desc: Format Go and frontend source files
+    cmds:
+      - task: back:fmt
+      - task: ui:fmt
+
+  fmt:check:
+    desc: Check Go and frontend formatting without changing files
+    cmds:
+      - task: back:fmt:check
+      - task: ui:fmt:check
+
+  test:
+    desc: Run Go tests
+    cmds:
+      - task: back:test
+
+  lint:
+    desc: Run Go and frontend linters
+    cmds:
+      - task: back:lint
+      - task: ui:lint
+
+  check:
+    desc: Run formatting, linting, type-checking, and tests
+    cmds:
+      - task: back:check
+      - task: ui:check
+
+  build:
+    desc: Build the current-platform Sharelock binary in dist/
+    cmds:
+      - task: ui:build
+      - task: back:build
+
+  release:
+    desc: "Update CHANGELOG.md and create tag version"
+    cmds:
+      - task: check
+      - ./release.sh
+
+  clean:
+    desc: Remove build and coverage artifacts
+    cmds:
+      - rm -rf "{{.DIST_DIR}}"
+      - rm -rf .tools
+      - rm -rf .coverage

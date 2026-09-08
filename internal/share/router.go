@@ -1,0 +1,127 @@
+package share
+
+import (
+	"context"
+	"errors"
+	"log/slog"
+	"net/http"
+	"time"
+
+	"github.com/demeero/sharelock/internal/errbrick"
+
+	"github.com/danielgtaylor/huma/v2"
+)
+
+const maxJSONOverhead = 1 << 20
+
+// createShareReqBody is the browser-visible, encrypted share payload.
+type createShareReqBody struct {
+	Envelope         string `doc:"Opaque, browser-encrypted share envelope."        json:"envelope"`
+	ExpiresInSeconds int64  `doc:"Lifetime in seconds."                             json:"expires_in_seconds"`
+	BurnAfterOpen    bool   `doc:"Delete the blob after its first successful read." json:"burn_after_open"`
+}
+
+// createShareReq is the input for creating an encrypted share.
+type createShareReq struct {
+	Body createShareReqBody
+}
+
+// createShareRespBody is returned once a share is persisted.
+type createShareRespBody struct {
+	ID          string `doc:"Share identifier to use in the public URL."       json:"id"`
+	RevokeToken string `doc:"Secret capability required to revoke this share." json:"revoke_token"`
+}
+
+// createShareResp is the response to a successful share creation.
+type createShareResp struct {
+	Body createShareRespBody
+}
+
+// openShareReq identifies the share to retrieve.
+type openShareReq struct {
+	Body *struct{}
+	ID   string `doc:"Share identifier from the URL." path:"id"`
+}
+
+// openShareRespBody is the opaque payload returned to the browser.
+type openShareRespBody struct {
+	Envelope string `doc:"Opaque, browser-encrypted share envelope."       json:"envelope"`
+	Burned   bool   `doc:"Whether this successful read removed the share." json:"burned"`
+}
+
+// openShareResp is the response to a successful share read.
+type openShareResp struct {
+	Body openShareRespBody
+}
+
+// revokeShareReq identifies a share and supplies its revoke capability.
+type revokeShareReq struct {
+	ID          string `doc:"Share identifier from the URL."                path:"id"`
+	RevokeToken string `doc:"Secret capability returned at share creation." header:"X-Revoke-Token"`
+}
+
+// RegisterRoutes adds Share's HTTP operations to an API group.
+func RegisterRoutes(api huma.API, share *Share, maxEncryptedBytes uint) {
+	huma.Post(api, "", func(ctx context.Context, input *createShareReq) (*createShareResp, error) {
+		created, err := share.Create.Exec(ctx, CreateInput{
+			EncryptedBlob: []byte(input.Body.Envelope),
+			ExpiresIn:     time.Duration(input.Body.ExpiresInSeconds) * time.Second,
+			BurnAfterOpen: input.Body.BurnAfterOpen,
+			CryptoVersion: 1,
+		})
+		if errors.Is(err, errbrick.ErrInvalidData) {
+			return nil, huma.NewError(http.StatusBadRequest, err.Error())
+		}
+		if err != nil {
+			slog.ErrorContext(ctx, "create share", "error", err)
+			return nil, huma.NewError(http.StatusInternalServerError, "internal error")
+		}
+
+		return &createShareResp{Body: createShareRespBody(created)}, nil
+	}, func(o *huma.Operation) {
+		o.OperationID = "createShare"
+		o.Summary = "Create an encrypted share"
+		o.DefaultStatus = http.StatusCreated
+		o.MaxBodyBytes = int64(maxEncryptedBytes) + maxJSONOverhead
+		o.Errors = []int{http.StatusBadRequest, http.StatusRequestEntityTooLarge, http.StatusInternalServerError}
+	})
+
+	huma.Post(api, "/{id}/open", func(ctx context.Context, input *openShareReq) (*openShareResp, error) {
+		record, err := share.Open.Exec(ctx, input.ID)
+		if errors.Is(err, errbrick.ErrNotFound) {
+			return nil, huma.NewError(http.StatusNotFound, "share is unavailable")
+		}
+		if err != nil {
+			slog.ErrorContext(ctx, "open share", "error", err)
+			return nil, huma.NewError(http.StatusInternalServerError, "internal error")
+		}
+
+		return &openShareResp{Body: openShareRespBody{
+			Envelope: string(record.EncryptedBlob),
+			Burned:   record.BurnAfterOpen,
+		}}, nil
+	}, func(o *huma.Operation) {
+		o.OperationID = "openShare"
+		o.Summary = "Retrieve an encrypted share"
+		o.Errors = []int{http.StatusNotFound, http.StatusInternalServerError}
+	})
+
+	huma.Delete(api, "/{id}", func(ctx context.Context, input *revokeShareReq) (*struct{}, error) {
+		if input.RevokeToken == "" {
+			return nil, huma.NewError(http.StatusNotFound, "share is unavailable")
+		}
+		if err := share.Revoke.Exec(ctx, input.ID, input.RevokeToken); err != nil {
+			if errors.Is(err, errbrick.ErrNotFound) {
+				return nil, huma.NewError(http.StatusNotFound, err.Error())
+			}
+			slog.ErrorContext(ctx, "revoke share", "error", err)
+			return nil, huma.NewError(http.StatusInternalServerError, "internal error")
+		}
+
+		return &struct{}{}, nil
+	}, func(o *huma.Operation) {
+		o.OperationID = "revokeShare"
+		o.Summary = "Revoke an encrypted share"
+		o.Errors = []int{http.StatusNotFound, http.StatusInternalServerError}
+	})
+}
