@@ -19,7 +19,11 @@ RUN CGO_ENABLED=0 GOOS=linux go build -trimpath \
 
 FROM alpine:3.22 AS runner
 
-RUN addgroup -S app && adduser -S app -G app
+RUN addgroup -S app && adduser -S app -G app \
+  # The default DB_PATH resolves to /data/sharelock.db. Ship the directory
+  # owned by app so Docker copies that ownership into an empty named volume
+  # mounted there; otherwise it is created as root and the app cannot write.
+  && mkdir -p /data && chown app:app /data
 
 COPY --from=builder /out/sharelock /usr/local/bin/sharelock
 
