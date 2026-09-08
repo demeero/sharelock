@@ -1,17 +1,43 @@
+# VCS and editor state
 .git
-.env
-.idea
-.coverage
-.cache
-.DS_Store
-.golangci.yml
 .gitignore
-Taskfile.yml
-README.md
-bin
-var
-vendor
+.idea
+.vscode
+.DS_Store
+
+# Local runtime state and secrets
+.env
+data/
+var/
+bin/
+
+# Build, test and tool artifacts
+dist/
+vendor/
 .tools
 .task
-data/
+.cache
+.coverage
+coverage.out
+coverage.html
+
+# Frontend sources are not part of the Go build: the production UI is embedded
+# from cmd/sharelock/assets/app, which is committed and rebuilt before the image.
+frontend/
+
+# Repository tooling and documentation
+.golangci.yml
+Taskfile.yml
+cliff.toml
+release.sh
+CHANGELOG.md
+README.md
+AGENTS.md
+CLAUDE.md
+docs/
+testdata/
+.github/
+
+# Agent scratch output
 .codex/
+graphify-out/
