@@ -21,6 +21,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/shares/settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get share settings */
+        get: operations["getShareSettings"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/shares/{id}": {
         parameters: {
             query?: never;
@@ -155,6 +172,24 @@ export interface components {
             /** @description Opaque, browser-encrypted share envelope. */
             envelope: string;
         };
+        ShareSettingsRespBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/ShareSettingsRespBody.json
+             */
+            readonly $schema?: string;
+            /**
+             * Format: int64
+             * @description Maximum encrypted share envelope size in bytes.
+             */
+            max_encrypted_bytes: number;
+            /**
+             * Format: int64
+             * @description Maximum share lifetime in seconds.
+             */
+            max_ttl_seconds: number;
+        };
     };
     responses: never;
     parameters: never;
@@ -215,6 +250,35 @@ export interface operations {
             };
             /** @description Internal Server Error */
             500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    getShareSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ShareSettingsRespBody"];
+                };
+            };
+            /** @description Error */
+            default: {
                 headers: {
                     [name: string]: unknown;
                 };

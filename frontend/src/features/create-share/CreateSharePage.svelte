@@ -1,7 +1,13 @@
 <script lang="ts">
+  import { onMount } from "svelte";
+
   import { apiClient, apiError } from "../../shared/api/client";
   import { bytesToBase64URL } from "../../shared/crypto/base64url";
-  import { encryptItems, type EncryptedItem } from "../../shared/crypto/share-crypto";
+  import {
+    encryptedEnvelopeByteLength,
+    encryptItems,
+    type EncryptedItem,
+  } from "../../shared/crypto/share-crypto";
   import { formatBytes } from "../../shared/format/bytes";
   import AppShell from "../../shared/ui/AppShell.svelte";
   import CopyField from "../../shared/ui/CopyField.svelte";
@@ -10,22 +16,27 @@
   import ShareItemForm from "./ShareItemForm.svelte";
   import type { DraftItem } from "./types";
 
-  const expiryLabels: Record<string, string> = {
-    "3600": "1h",
-    "86400": "24h",
-    "604800": "7d",
-    "2592000": "30d",
+  const preferredExpirySeconds = [3600, 86400, 604800, 2592000];
+
+  type ExpiryOption = {
+    label: string;
+    seconds: number;
   };
 
   let nextID = 1;
   let items = $state<DraftItem[]>([newDraftItem()]);
-  let expiresInSeconds = $state("86400");
+  let expiresInSeconds = $state("");
   let burnAfterOpen = $state(false);
   let busy = $state(false);
   let error = $state("");
   let created = $state<{ revokeURL: string; shareURL: string } | null>(null);
+  let settings = $state<{ max_encrypted_bytes: number; max_ttl_seconds: number } | null>(null);
+  let settingsLoading = $state(true);
+  let settingsError = $state("");
 
   let payloadCount = $derived(items.filter((item) => item.file || item.text.length > 0).length);
+  let expiryOptions = $derived(settings ? allowedExpiryOptions(settings.max_ttl_seconds) : []);
+  let selectedExpiryLabel = $derived(formatDuration(Number(expiresInSeconds)));
   let totalBytes = $derived(
     items.reduce(
       (total, item) => total + (item.file?.size ?? new TextEncoder().encode(item.text).byteLength),
@@ -33,8 +44,12 @@
     ),
   );
   let summary = $derived(
-    `${payloadCount} ${payloadCount === 1 ? "payload" : "payloads"} · ${formatBytes(totalBytes)} · expires in ${expiryLabels[expiresInSeconds]} · ${burnAfterOpen ? "burn after open" : "reusable"}`,
+    `${payloadCount} ${payloadCount === 1 ? "payload" : "payloads"} · ${formatBytes(totalBytes)} · expires in ${selectedExpiryLabel} · ${burnAfterOpen ? "burn after open" : "reusable"}`,
   );
+
+  onMount(() => {
+    void loadSettings();
+  });
 
   function newDraftItem(): DraftItem {
     return { id: nextID++, name: "", text: "", file: null };
@@ -51,14 +66,49 @@
   }
 
   function handleShortcut(event: KeyboardEvent): void {
-    if (!created && !busy && (event.ctrlKey || event.metaKey) && event.key === "Enter") {
+    if (
+      !created &&
+      settings &&
+      !busy &&
+      (event.ctrlKey || event.metaKey) &&
+      event.key === "Enter"
+    ) {
       event.preventDefault();
       void submit();
     }
   }
 
+  async function loadSettings(): Promise<void> {
+    settingsLoading = true;
+    settingsError = "";
+    try {
+      const { data, error: responseError } = await apiClient.GET("/api/v1/shares/settings");
+      if (!data) {
+        settingsError = apiError(responseError, "Could not load share settings.").message;
+        return;
+      }
+
+      const options = allowedExpiryOptions(data.max_ttl_seconds);
+      if (!Number.isSafeInteger(data.max_encrypted_bytes) || data.max_encrypted_bytes <= 0) {
+        settingsError = "The server returned an invalid encrypted share size limit.";
+        return;
+      }
+      if (options.length === 0) {
+        settingsError = "The server returned an invalid maximum share lifetime.";
+        return;
+      }
+
+      settings = data;
+      expiresInSeconds = String(defaultExpirySeconds(options));
+    } catch (caught) {
+      settingsError = caught instanceof Error ? caught.message : "Could not load share settings.";
+    } finally {
+      settingsLoading = false;
+    }
+  }
+
   async function submit(): Promise<void> {
-    if (busy) {
+    if (busy || !settings) {
       return;
     }
 
@@ -69,7 +119,21 @@
       if (encryptedItems.length === 0) {
         throw new Error("Add at least one non-empty text value or file.");
       }
+
+      const expectedEnvelopeBytes = encryptedEnvelopeByteLength(encryptedItems);
+      if (expectedEnvelopeBytes > settings.max_encrypted_bytes) {
+        throw new Error(
+          `The encrypted share would be ${formatBytes(expectedEnvelopeBytes)}. The server limit is ${formatBytes(settings.max_encrypted_bytes)}.`,
+        );
+      }
+
       const { envelope, key } = await encryptItems(encryptedItems);
+      const envelopeBytes = new TextEncoder().encode(envelope).byteLength;
+      if (envelopeBytes > settings.max_encrypted_bytes) {
+        throw new Error(
+          `The encrypted share is ${formatBytes(envelopeBytes)}. The server limit is ${formatBytes(settings.max_encrypted_bytes)}.`,
+        );
+      }
       const { data, error: responseError } = await apiClient.POST("/api/v1/shares", {
         body: {
           envelope,
@@ -115,6 +179,42 @@
     }
 
     return result;
+  }
+
+  function allowedExpiryOptions(maxTTLSeconds: number): ExpiryOption[] {
+    if (!Number.isSafeInteger(maxTTLSeconds) || maxTTLSeconds <= 0) {
+      return [];
+    }
+
+    const values = preferredExpirySeconds.filter((seconds) => seconds <= maxTTLSeconds);
+    if (!values.includes(maxTTLSeconds)) {
+      values.push(maxTTLSeconds);
+    }
+
+    return values
+      .sort((left, right) => left - right)
+      .map((seconds) => ({
+        seconds,
+        label: formatDuration(seconds),
+      }));
+  }
+
+  function defaultExpirySeconds(options: ExpiryOption[]): number {
+    return options.find((option) => option.seconds === 86400)?.seconds ?? options.at(-1)!.seconds;
+  }
+
+  function formatDuration(seconds: number): string {
+    if (seconds % 86400 === 0) {
+      return `${seconds / 86400} day${seconds === 86400 ? "" : "s"}`;
+    }
+    if (seconds % 3600 === 0) {
+      return `${seconds / 3600} hour${seconds === 3600 ? "" : "s"}`;
+    }
+    if (seconds % 60 === 0) {
+      return `${seconds / 60} minute${seconds === 60 ? "" : "s"}`;
+    }
+
+    return `${seconds} second${seconds === 1 ? "" : "s"}`;
   }
 </script>
 
@@ -182,117 +282,111 @@
           </details>
         </div>
 
-        <form
-          is-="column"
-          gap-="2"
-          onsubmit={(event) => {
-            event.preventDefault();
-            void submit();
-          }}
-        >
-          <div is-="column" gap-="2">
-            {#each items as item, index (item.id)}
-              <ShareItemForm
-                {item}
-                {index}
-                removable={items.length > 1}
-                disabled={busy}
-                onChange={updateItem}
-                onRemove={() => removeItem(item.id)}
-              />
-            {/each}
+        {#if settingsLoading}
+          <div is-="row" align-="center start" gap-="1" aria-live="polite">
+            <span is-="spinner" variant-="dots" aria-hidden="true"></span>
+            <span>Loading server settings…</span>
           </div>
-
-          <div is-="row" wrap- align-="center start" gap-="1">
-            <button
-              box-="round"
-              type="button"
-              onclick={() => (items = [...items, newDraftItem()])}
-              disabled={busy}>+ Add payload</button
-            >
-          </div>
-
-          <section box-="square" shear-="top" is-="column" gap-="1">
-            <div is-="row" wrap- align-="center between" gap-="1">
-              <span is-="badge" variant-="background0">DELIVERY POLICY</span>
-              <span is-="badge" variant-="background2">{expiryLabels[expiresInSeconds]}</span>
+        {:else if settingsError}
+          <div is-="column" gap-="1">
+            <Notice status="SETTINGS UNAVAILABLE" message={settingsError} />
+            <div is-="row" wrap- align-="center start" gap-="1">
+              <button box-="round" type="button" onclick={() => void loadSettings()}>Retry</button>
             </div>
-            <div pad-="1" is-="column" gap-="1">
-              <p>Expires after</p>
-              <div
-                is-="row"
-                wrap-
-                align-="center start"
-                gap-="1"
-                role="radiogroup"
-                aria-label="expires after"
+          </div>
+        {:else if settings}
+          <form
+            is-="column"
+            gap-="2"
+            onsubmit={(event) => {
+              event.preventDefault();
+              void submit();
+            }}
+          >
+            <div is-="column" gap-="2">
+              {#each items as item, index (item.id)}
+                <ShareItemForm
+                  {item}
+                  {index}
+                  removable={items.length > 1}
+                  disabled={busy}
+                  onChange={updateItem}
+                  onRemove={() => removeItem(item.id)}
+                />
+              {/each}
+            </div>
+
+            <div is-="row" wrap- align-="center start" gap-="1">
+              <button
+                box-="round"
+                type="button"
+                onclick={() => (items = [...items, newDraftItem()])}
+                disabled={busy}>+ Add payload</button
               >
-                <label
-                  ><input
-                    type="radio"
-                    name="expires-after"
-                    value="3600"
-                    bind:group={expiresInSeconds}
-                    disabled={busy}
-                  /> 1 hour</label
+            </div>
+
+            <section box-="square" shear-="top" is-="column" gap-="1">
+              <div is-="row" wrap- align-="center between" gap-="1">
+                <span is-="badge" variant-="background0">DELIVERY POLICY</span>
+                <span is-="badge" variant-="background2">{selectedExpiryLabel}</span>
+              </div>
+              <div pad-="1" is-="column" gap-="1">
+                <p>Expires after</p>
+                <div
+                  is-="row"
+                  wrap-
+                  align-="center start"
+                  gap-="1"
+                  role="radiogroup"
+                  aria-label="expires after"
                 >
+                  {#each expiryOptions as option (option.seconds)}
+                    <label
+                      ><input
+                        type="radio"
+                        name="expires-after"
+                        value={String(option.seconds)}
+                        bind:group={expiresInSeconds}
+                        disabled={busy}
+                      />
+                      {option.label}</label
+                    >
+                  {/each}
+                </div>
                 <label
                   ><input
-                    type="radio"
-                    name="expires-after"
-                    value="86400"
-                    bind:group={expiresInSeconds}
+                    is-="switch"
+                    type="checkbox"
+                    bind:checked={burnAfterOpen}
                     disabled={busy}
-                  /> 24 hours</label
-                >
-                <label
-                  ><input
-                    type="radio"
-                    name="expires-after"
-                    value="604800"
-                    bind:group={expiresInSeconds}
-                    disabled={busy}
-                  /> 7 days</label
-                >
-                <label
-                  ><input
-                    type="radio"
-                    name="expires-after"
-                    value="2592000"
-                    bind:group={expiresInSeconds}
-                    disabled={busy}
-                  /> 30 days</label
+                  /> Burn after first open</label
                 >
               </div>
-              <label
-                ><input is-="switch" type="checkbox" bind:checked={burnAfterOpen} disabled={busy} /> Burn
-                after first open</label
-              >
+            </section>
+
+            <div aria-live="polite">
+              <mark fg-="foreground2">{summary}</mark>
             </div>
-          </section>
 
-          <div aria-live="polite">
-            <mark fg-="foreground2">{summary}</mark>
-          </div>
+            {#if error}
+              <Notice
+                status="CREATE FAILED"
+                message={error}
+                recoveryHref="/"
+                recoveryLabel="Reset form"
+              />
+            {/if}
 
-          {#if error}
-            <Notice
-              status="CREATE FAILED"
-              message={error}
-              recoveryHref="/"
-              recoveryLabel="Reset form"
-            />
-          {/if}
-
-          <div is-="row" wrap- align-="center between" gap-="1">
-            <span is-="badge" variant-="background2">Ctrl/Cmd + Enter</span>
-            <button box-="round" variant-="mauve" type="submit" disabled={busy}>
-              {#if busy}<span is-="spinner" variant-="dots" aria-hidden="true"></span> Encrypting…{:else}<Icon
-                  name="lock"
-                /> Encrypt & create{/if}
-            </button>
-          </div>
-        </form>
+            <div is-="row" wrap- align-="center between" gap-="1">
+              <span is-="badge" variant-="background2">Ctrl/Cmd + Enter</span>
+              <button box-="round" variant-="mauve" type="submit" disabled={busy}>
+                {#if busy}<span is-="spinner" variant-="dots" aria-hidden="true"></span> Encrypting…{:else}<Icon
+                    name="lock"
+                  /> Encrypt & create{/if}
+              </button>
+            </div>
+          </form>
+        {/if}
       </div>
     </section>
   {/if}

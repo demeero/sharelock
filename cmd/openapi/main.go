@@ -12,6 +12,7 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/danielgtaylor/huma/v2/adapters/humago"
 
+	"github.com/demeero/sharelock/internal/config"
 	"github.com/demeero/sharelock/internal/share"
 )
 
@@ -40,7 +41,7 @@ func openAPISpec() *huma.OpenAPI {
 	mux := http.NewServeMux()
 	api := humago.New(mux, huma.DefaultConfig("Sharelock API", "1.0.0"))
 	apiGroup := huma.NewGroup(api, "/api/v1/shares")
-	share.RegisterRoutes(apiGroup, nil, 0)
+	share.RegisterRoutes(apiGroup, nil, config.ShareConfig{})
 
 	return api.OpenAPI()
 }

@@ -183,6 +183,36 @@
           "burned"
         ],
         "type": "object"
+      },
+      "ShareSettingsRespBody": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/schemas/ShareSettingsRespBody.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "max_encrypted_bytes": {
+            "description": "Maximum encrypted share envelope size in bytes.",
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "max_ttl_seconds": {
+            "description": "Maximum share lifetime in seconds.",
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "max_encrypted_bytes",
+          "max_ttl_seconds"
+        ],
+        "type": "object"
       }
     }
   },
@@ -258,6 +288,34 @@
           }
         },
         "summary": "Create an encrypted share"
+      }
+    },
+    "/api/v1/shares/settings": {
+      "get": {
+        "operationId": "getShareSettings",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ShareSettingsRespBody"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Get share settings"
       }
     },
     "/api/v1/shares/{id}": {

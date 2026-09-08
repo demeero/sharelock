@@ -48,9 +48,20 @@ func TestShareHTTPFlow(t *testing.T) {
 	openAPIDocument := httptest.NewRecorder()
 	server.handler.ServeHTTP(openAPIDocument, httptest.NewRequest(http.MethodGet, "/openapi.json", http.NoBody))
 	require.Equalf(t, http.StatusOK, openAPIDocument.Code, "GET /openapi.json body = %s", openAPIDocument.Body.String())
-	for _, operationID := range []string{"createShare", "openShare", "revokeShare"} {
+	for _, operationID := range []string{"createShare", "openShare", "revokeShare", "getShareSettings"} {
 		require.Contains(t, openAPIDocument.Body.String(), "\"operationId\":\""+operationID+"\"")
 	}
+
+	settingsResponse := httptest.NewRecorder()
+	server.handler.ServeHTTP(settingsResponse, httptest.NewRequest(http.MethodGet, "/api/v1/shares/settings", http.NoBody))
+	require.Equalf(t, http.StatusOK, settingsResponse.Code, "settings body = %s", settingsResponse.Body.String())
+	var settings struct {
+		MaxEncryptedBytes uint  `json:"max_encrypted_bytes"`
+		MaxTTLSeconds     int64 `json:"max_ttl_seconds"`
+	}
+	require.NoError(t, json.NewDecoder(settingsResponse.Body).Decode(&settings))
+	require.Equal(t, cfg.Share.MaxEncryptedBytes, settings.MaxEncryptedBytes)
+	require.Equal(t, int64(cfg.Share.MaxTTL/time.Second), settings.MaxTTLSeconds)
 
 	created := createTestShare(t, server, true)
 	openRequest := httptest.NewRequest(http.MethodPost, "/api/v1/shares/"+created.ID+"/open", http.NoBody)

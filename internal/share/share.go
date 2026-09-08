@@ -28,7 +28,7 @@ func New(cfg config.ShareConfig, api huma.API, db *sql.DB) *Share {
 		Vacuum: vacuumShare,
 	}
 
-	RegisterRoutes(api, share, cfg.MaxEncryptedBytes)
+	RegisterRoutes(api, share, cfg)
 
 	return share
 }

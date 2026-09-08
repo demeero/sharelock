@@ -2,6 +2,8 @@ import { base64URLToBytes, bytesToBase64URL } from "./base64url";
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
+const aesGCMAuthenticationTagBytes = 16;
+const aesGCMInitializationVectorBytes = 12;
 
 export type EncryptedItem = {
   bytes_base64: string;
@@ -20,6 +22,21 @@ type Manifest = {
   items: EncryptedItem[];
   version: 1;
 };
+
+// encryptedEnvelopeByteLength calculates the encrypted envelope size without encrypting data.
+export function encryptedEnvelopeByteLength(items: EncryptedItem[]): number {
+  const plainText = encoder.encode(JSON.stringify({ version: 1, items } satisfies Manifest));
+  const envelope: Envelope = {
+    version: 1,
+    algorithm: "AES-GCM",
+    iv: "x".repeat(base64URLEncodedLength(aesGCMInitializationVectorBytes)),
+    ciphertext: "x".repeat(
+      base64URLEncodedLength(plainText.byteLength + aesGCMAuthenticationTagBytes),
+    ),
+  };
+
+  return encoder.encode(JSON.stringify(envelope)).byteLength;
+}
 
 export async function encryptItems(
   items: EncryptedItem[],
@@ -81,4 +98,8 @@ export function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {
   const copy = new Uint8Array(bytes.byteLength);
   copy.set(bytes);
   return copy.buffer;
+}
+
+function base64URLEncodedLength(byteLength: number): number {
+  return Math.ceil((byteLength * 8) / 6);
 }

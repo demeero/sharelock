@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/demeero/sharelock/internal/config"
 	"github.com/demeero/sharelock/internal/errbrick"
 
 	"github.com/danielgtaylor/huma/v2"
@@ -60,8 +61,29 @@ type revokeShareReq struct {
 	RevokeToken string `doc:"Secret capability returned at share creation." header:"X-Revoke-Token"`
 }
 
+// shareSettingsRespBody contains the share limits enforced by the server.
+type shareSettingsRespBody struct {
+	MaxEncryptedBytes uint  `doc:"Maximum encrypted share envelope size in bytes." json:"max_encrypted_bytes"`
+	MaxTTLSeconds     int64 `doc:"Maximum share lifetime in seconds."              json:"max_ttl_seconds"`
+}
+
+// shareSettingsResp is the public share settings response.
+type shareSettingsResp struct {
+	Body shareSettingsRespBody
+}
+
 // RegisterRoutes adds Share's HTTP operations to an API group.
-func RegisterRoutes(api huma.API, share *Share, maxEncryptedBytes uint) {
+func RegisterRoutes(api huma.API, share *Share, cfg config.ShareConfig) {
+	huma.Get(api, "/settings", func(context.Context, *struct{}) (*shareSettingsResp, error) {
+		return &shareSettingsResp{Body: shareSettingsRespBody{
+			MaxEncryptedBytes: cfg.MaxEncryptedBytes,
+			MaxTTLSeconds:     int64(cfg.MaxTTL / time.Second),
+		}}, nil
+	}, func(o *huma.Operation) {
+		o.OperationID = "getShareSettings"
+		o.Summary = "Get share settings"
+	})
+
 	huma.Post(api, "", func(ctx context.Context, input *createShareReq) (*createShareResp, error) {
 		created, err := share.Create.Exec(ctx, CreateInput{
 			EncryptedBlob: []byte(input.Body.Envelope),
@@ -82,7 +104,7 @@ func RegisterRoutes(api huma.API, share *Share, maxEncryptedBytes uint) {
 		o.OperationID = "createShare"
 		o.Summary = "Create an encrypted share"
 		o.DefaultStatus = http.StatusCreated
-		o.MaxBodyBytes = int64(maxEncryptedBytes) + maxJSONOverhead
+		o.MaxBodyBytes = int64(cfg.MaxEncryptedBytes) + maxJSONOverhead
 		o.Errors = []int{http.StatusBadRequest, http.StatusRequestEntityTooLarge, http.StatusInternalServerError}
 	})
 
