@@ -17,6 +17,37 @@ The browser encrypts every item before upload. The SQLite database stores only a
 
 It intentionally does not include accounts, teams, RBAC, search, revisions, audit trails, password vaulting, secret rotation, or external infrastructure.
 
+## How It Looks
+
+Creating a share, copying the link, and opening it once as the recipient:
+
+![Sharelock: creating an encrypted share and opening it as the recipient](docs/media/demo.gif)
+
+<details>
+<summary>Screenshots</summary>
+
+**Create a share.** Paste text or attach a file, choose an expiration, and optionally burn the share after the first open. The payload is encrypted before the request leaves the browser.
+
+![Create encrypted share form with a filled payload and delivery policy](docs/media/create-share.png)
+
+**Share ready.** The share URL carries the decryption key after `#`; the separate revoke URL is shown only once, at creation time.
+
+![Share ready screen with the share URL and the revoke URL](docs/media/share-ready.png)
+
+**Open a share.** The recipient gets ciphertext from the server and decrypts it locally with the key from the URL fragment.
+
+![Sealed share waiting to be decrypted in the browser](docs/media/open-sealed.png)
+
+**Decrypted payloads.** Plaintext exists only in that browser tab. A burn-after-open share is deleted from the server on this first open.
+
+![Decrypted payload with a burned-after-open notice](docs/media/decrypted.png)
+
+**Revoke.** Anyone holding the revoke URL can permanently delete the ciphertext, after an explicit confirmation.
+
+![Revoke confirmation dialog](docs/media/revoke.png)
+
+</details>
+
 ## Installation Options
 
 You can run Sharelock in three ways:
