@@ -2,6 +2,7 @@ package share
 
 import (
 	"database/sql"
+	"errors"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -46,11 +47,11 @@ const sha256Size = 32
 type shareRow struct {
 	CreatedAt       time.Time
 	ExpiresAt       time.Time
+	ViewsLeft       *int64
 	ID              []byte
 	EncryptedBlob   []byte
 	RevokeTokenHash []byte
 	CryptoVersion   int
-	BurnAfterOpen   bool
 }
 
 // insertShare writes a row directly, bypassing CreateShare, so tests can set
@@ -61,18 +62,33 @@ func insertShare(t *testing.T, db *sql.DB, row shareRow) {
 	_, err := db.Exec(`
 		INSERT INTO shares (
 			id, encrypted_blob, crypto_version, created_at, expires_at,
-			burn_after_open, revoke_token_hash, size_bytes
+			views_left, revoke_token_hash, size_bytes
 		) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
 		row.ID,
 		row.EncryptedBlob,
 		row.CryptoVersion,
 		row.CreatedAt.Unix(),
 		row.ExpiresAt.Unix(),
-		boolToInteger(row.BurnAfterOpen),
+		row.ViewsLeft,
 		row.RevokeTokenHash,
 		len(row.EncryptedBlob),
 	)
 	require.NoError(t, err)
+}
+
+// viewsLeft reads the remaining views of a share, reporting whether the row
+// still exists and whether its limit is unset.
+func viewsLeft(t *testing.T, db *sql.DB, id []byte) (*int64, bool) {
+	t.Helper()
+
+	var remaining *int64
+	err := db.QueryRow(`SELECT views_left FROM shares WHERE id = ?`, id).Scan(&remaining)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, false
+	}
+	require.NoError(t, err)
+
+	return remaining, true
 }
 
 func countShares(t *testing.T, db *sql.DB) int {

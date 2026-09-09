@@ -27,7 +27,7 @@ func TestShareHTTPFlow(t *testing.T) {
 	cfg := config.Config{
 		HTTP:  config.HTTPConfig{Addr: ":0", ReadHeaderTimeout: time.Second, ReadTimeout: time.Second, WriteTimeout: time.Second},
 		DB:    config.DBConfig{Path: filepath.Join(t.TempDir(), "sharelock.db"), MaxOpenConns: 1, MaxIdleConns: 1, StartupTimeout: time.Second},
-		Share: config.ShareConfig{MaxEncryptedBytes: 1024, MaxTTL: 24 * time.Hour, IdentifierSize: 32, VacuumInterval: time.Hour},
+		Share: config.ShareConfig{MaxEncryptedBytes: 1024, MaxTTL: 24 * time.Hour, IdentifierSize: 32, MaxViews: 10, VacuumInterval: time.Hour},
 	}
 	db, err := sql.Open("sqlite", cfg.DB.Path)
 	require.NoError(t, err)
@@ -58,29 +58,30 @@ func TestShareHTTPFlow(t *testing.T) {
 	var settings struct {
 		MaxEncryptedBytes uint  `json:"max_encrypted_bytes"`
 		MaxTTLSeconds     int64 `json:"max_ttl_seconds"`
+		MaxViews          uint  `json:"max_views"`
 	}
 	require.NoError(t, json.NewDecoder(settingsResponse.Body).Decode(&settings))
 	require.Equal(t, cfg.Share.MaxEncryptedBytes, settings.MaxEncryptedBytes)
 	require.Equal(t, int64(cfg.Share.MaxTTL/time.Second), settings.MaxTTLSeconds)
+	require.Equal(t, cfg.Share.MaxViews, settings.MaxViews)
 
-	created := createTestShare(t, server, true)
+	created := createTestShare(t, server, new(int64(2)))
 	openRequest := httptest.NewRequest(http.MethodPost, "/api/v1/shares/"+created.ID+"/open", http.NoBody)
-	openResponse := httptest.NewRecorder()
-	server.handler.ServeHTTP(openResponse, openRequest)
-	require.Equalf(t, http.StatusOK, openResponse.Code, "first open body = %s", openResponse.Body.String())
-	var opened struct {
-		Envelope string `json:"envelope"`
-		Burned   bool   `json:"burned"`
+	for _, wantViewsLeft := range []int64{1, 0} {
+		openResponse := httptest.NewRecorder()
+		server.handler.ServeHTTP(openResponse, openRequest)
+		require.Equalf(t, http.StatusOK, openResponse.Code, "open body = %s", openResponse.Body.String())
+		opened := decodeOpenedShare(t, openResponse)
+		require.NotEmptyf(t, opened.Envelope, "open response = %#v, want opaque envelope", opened)
+		require.Equal(t, &wantViewsLeft, opened.ViewsLeft)
+		require.Equal(t, wantViewsLeft == 0, opened.Burned)
 	}
-	require.NoError(t, json.NewDecoder(openResponse.Body).Decode(&opened))
-	require.NotEmptyf(t, opened.Envelope, "open response = %#v, want opaque envelope", opened)
-	require.Truef(t, opened.Burned, "open response = %#v, want burn marker", opened)
 
-	secondOpen := httptest.NewRecorder()
-	server.handler.ServeHTTP(secondOpen, openRequest)
-	require.Equal(t, http.StatusNotFound, secondOpen.Code)
+	thirdOpen := httptest.NewRecorder()
+	server.handler.ServeHTTP(thirdOpen, openRequest)
+	require.Equal(t, http.StatusNotFound, thirdOpen.Code)
 
-	revocable := createTestShare(t, server, false)
+	revocable := createTestShare(t, server, nil)
 	revokeRequest := httptest.NewRequest(http.MethodDelete, "/api/v1/shares/"+revocable.ID, http.NoBody)
 	revokeRequest.Header.Set("X-Revoke-Token", revocable.RevokeToken)
 	revokeResponse := httptest.NewRecorder()
@@ -92,18 +93,94 @@ func TestShareHTTPFlow(t *testing.T) {
 	require.Equal(t, http.StatusNotFound, openRevoked.Code)
 }
 
+// TestShareHTTPFlow_UnlimitedViews covers a share created without a view limit:
+// it stays readable and reports no remaining-view count.
+func TestShareHTTPFlow_UnlimitedViews(t *testing.T) {
+	t.Parallel()
+	server := newTestServer(t)
+
+	created := createTestShare(t, server, nil)
+	openRequest := httptest.NewRequest(http.MethodPost, "/api/v1/shares/"+created.ID+"/open", http.NoBody)
+	for range 3 {
+		response := httptest.NewRecorder()
+		server.handler.ServeHTTP(response, openRequest)
+		require.Equalf(t, http.StatusOK, response.Code, "open body = %s", response.Body.String())
+		opened := decodeOpenedShare(t, response)
+		require.Nil(t, opened.ViewsLeft)
+		require.False(t, opened.Burned)
+	}
+}
+
+func TestShareHTTPFlow_RejectsViewsAboveMax(t *testing.T) {
+	t.Parallel()
+	server := newTestServer(t)
+
+	body, err := json.Marshal(map[string]any{
+		"envelope":           testEnvelope,
+		"expires_in_seconds": 3600,
+		"views":              11,
+	})
+	require.NoError(t, err)
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/shares", bytes.NewReader(body))
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	server.handler.ServeHTTP(response, request)
+
+	require.Equalf(t, http.StatusBadRequest, response.Code, "create body = %s", response.Body.String())
+	require.Contains(t, response.Body.String(), "views must be between 1 and 10")
+}
+
+const testEnvelope = `{"version":1,"algorithm":"AES-GCM","iv":"opaque","ciphertext":"opaque"}`
+
 type testShareResponse struct {
 	ID          string `json:"id"`
 	RevokeToken string `json:"revoke_token"`
 }
 
-func createTestShare(t *testing.T, server *Server, burnAfterOpen bool) testShareResponse {
+type testOpenedShare struct {
+	ViewsLeft *int64 `json:"views_left"`
+	Envelope  string `json:"envelope"`
+	Burned    bool   `json:"burned"`
+}
+
+func newTestServer(t *testing.T) *Server {
 	t.Helper()
-	body, err := json.Marshal(map[string]any{
-		"envelope":           `{"version":1,"algorithm":"AES-GCM","iv":"opaque","ciphertext":"opaque"}`,
+	cfg := config.Config{
+		HTTP:  config.HTTPConfig{Addr: ":0", ReadHeaderTimeout: time.Second, ReadTimeout: time.Second, WriteTimeout: time.Second},
+		DB:    config.DBConfig{Path: filepath.Join(t.TempDir(), "sharelock.db"), MaxOpenConns: 1, MaxIdleConns: 1, StartupTimeout: time.Second},
+		Share: config.ShareConfig{MaxEncryptedBytes: 1024, MaxTTL: 24 * time.Hour, IdentifierSize: 32, MaxViews: 10, VacuumInterval: time.Hour},
+	}
+	db, err := sql.Open("sqlite", cfg.DB.Path)
+	require.NoError(t, err)
+	t.Cleanup(func() { db.Close() })
+	require.NoError(t, migration.Migrate(t.Context(), db))
+
+	mux := http.NewServeMux()
+	api := humago.New(mux, huma.DefaultConfig("test", "1.0.0"))
+	share.New(cfg.Share, huma.NewGroup(api, "/api/v1/shares"), db)
+
+	return NewServer(mux, cfg, db)
+}
+
+func decodeOpenedShare(t *testing.T, response *httptest.ResponseRecorder) testOpenedShare {
+	t.Helper()
+	var opened testOpenedShare
+	require.NoError(t, json.NewDecoder(response.Body).Decode(&opened))
+	return opened
+}
+
+// createTestShare creates a share with the given view limit; a nil views means
+// the share stays readable until it expires.
+func createTestShare(t *testing.T, server *Server, views *int64) testShareResponse {
+	t.Helper()
+	payload := map[string]any{
+		"envelope":           testEnvelope,
 		"expires_in_seconds": 3600,
-		"burn_after_open":    burnAfterOpen,
-	})
+	}
+	if views != nil {
+		payload["views"] = *views
+	}
+	body, err := json.Marshal(payload)
 	require.NoError(t, err)
 	request := httptest.NewRequest(http.MethodPost, "/api/v1/shares", bytes.NewReader(body))
 	request.Header.Set("Content-Type", "application/json")

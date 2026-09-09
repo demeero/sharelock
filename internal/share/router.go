@@ -17,9 +17,9 @@ const maxJSONOverhead = 1 << 20
 
 // createShareReqBody is the browser-visible, encrypted share payload.
 type createShareReqBody struct {
-	Envelope         string `doc:"Opaque, browser-encrypted share envelope."        json:"envelope"`
-	ExpiresInSeconds int64  `doc:"Lifetime in seconds."                             json:"expires_in_seconds"`
-	BurnAfterOpen    bool   `doc:"Delete the blob after its first successful read." json:"burn_after_open"`
+	Views            *int64 `doc:"Number of allowed opens. Omit to allow opens until expiration." json:"views,omitempty"`
+	Envelope         string `doc:"Opaque, browser-encrypted share envelope."                      json:"envelope"`
+	ExpiresInSeconds int64  `doc:"Lifetime in seconds."                                           json:"expires_in_seconds"`
 }
 
 // createShareReq is the input for creating an encrypted share.
@@ -46,8 +46,9 @@ type openShareReq struct {
 
 // openShareRespBody is the opaque payload returned to the browser.
 type openShareRespBody struct {
-	Envelope string `doc:"Opaque, browser-encrypted share envelope."       json:"envelope"`
-	Burned   bool   `doc:"Whether this successful read removed the share." json:"burned"`
+	ViewsLeft *int64 `doc:"Opens left after this one. Null when there is no limit." json:"views_left"`
+	Envelope  string `doc:"Opaque, browser-encrypted share envelope."               json:"envelope"`
+	Burned    bool   `doc:"Whether this successful read removed the share."         json:"burned"`
 }
 
 // openShareResp is the response to a successful share read.
@@ -65,6 +66,7 @@ type revokeShareReq struct {
 type shareSettingsRespBody struct {
 	MaxEncryptedBytes uint  `doc:"Maximum encrypted share envelope size in bytes." json:"max_encrypted_bytes"`
 	MaxTTLSeconds     int64 `doc:"Maximum share lifetime in seconds."              json:"max_ttl_seconds"`
+	MaxViews          uint  `doc:"Maximum number of opens a share may allow."      json:"max_views"`
 }
 
 // shareSettingsResp is the public share settings response.
@@ -78,6 +80,7 @@ func RegisterRoutes(api huma.API, share *Share, cfg config.ShareConfig) {
 		return &shareSettingsResp{Body: shareSettingsRespBody{
 			MaxEncryptedBytes: cfg.MaxEncryptedBytes,
 			MaxTTLSeconds:     int64(cfg.MaxTTL / time.Second),
+			MaxViews:          cfg.MaxViews,
 		}}, nil
 	}, func(o *huma.Operation) {
 		o.OperationID = "getShareSettings"
@@ -88,7 +91,7 @@ func RegisterRoutes(api huma.API, share *Share, cfg config.ShareConfig) {
 		created, err := share.Create.Exec(ctx, CreateInput{
 			EncryptedBlob: []byte(input.Body.Envelope),
 			ExpiresIn:     time.Duration(input.Body.ExpiresInSeconds) * time.Second,
-			BurnAfterOpen: input.Body.BurnAfterOpen,
+			Views:         input.Body.Views,
 			CryptoVersion: 1,
 		})
 		if errors.Is(err, errbrick.ErrInvalidData) {
@@ -119,8 +122,9 @@ func RegisterRoutes(api huma.API, share *Share, cfg config.ShareConfig) {
 		}
 
 		return &openShareResp{Body: openShareRespBody{
-			Envelope: string(record.EncryptedBlob),
-			Burned:   record.BurnAfterOpen,
+			Envelope:  string(record.EncryptedBlob),
+			ViewsLeft: record.ViewsLeft,
+			Burned:    record.ViewsLeft != nil && *record.ViewsLeft == 0,
 		}}, nil
 	}, func(o *huma.Operation) {
 		o.OperationID = "openShare"

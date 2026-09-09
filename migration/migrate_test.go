@@ -1,12 +1,16 @@
 package migration
 
 import (
+	"bytes"
 	"database/sql"
 	"path/filepath"
 	"testing"
 
 	_ "modernc.org/sqlite"
 )
+
+// currentSchemaVersion is the highest embedded migration number.
+const currentSchemaVersion = 2
 
 func TestMigrateCreatesCurrentSchemaAndIsIdempotent(t *testing.T) {
 	t.Parallel()
@@ -30,8 +34,80 @@ func TestMigrateCreatesCurrentSchemaAndIsIdempotent(t *testing.T) {
 	if err := db.QueryRow(`SELECT version, dirty FROM schema_migrations`).Scan(&version, &dirty); err != nil {
 		t.Fatalf("read migration version: %v", err)
 	}
-	if version != 1 || dirty {
-		t.Fatalf("schema_migrations = (version=%d, dirty=%t), want (1, false)", version, dirty)
+	if version != currentSchemaVersion || dirty {
+		t.Fatalf("schema_migrations = (version=%d, dirty=%t), want (%d, false)", version, dirty, currentSchemaVersion)
+	}
+
+	assertColumnExists(t, db, "shares", "views_left")
+}
+
+// TestMigrateReplacesBurnAfterOpenWithViews pins the data mapping of migration
+// 000002: a burn-after-open share becomes a single-view share, and a reusable
+// one becomes a share with no view limit at all.
+func TestMigrateReplacesBurnAfterOpenWithViews(t *testing.T) {
+	t.Parallel()
+	db, err := openTestDB(t)
+	if err != nil {
+		t.Fatalf("open test database: %v", err)
+	}
+	defer db.Close()
+
+	migrator, err := newMigrator(db)
+	if err != nil {
+		t.Fatalf("new migrator: %v", err)
+	}
+	if err := migrator.Steps(1); err != nil {
+		t.Fatalf("apply first migration: %v", err)
+	}
+
+	burnID := bytes.Repeat([]byte{0x01}, 32)
+	reusableID := bytes.Repeat([]byte{0x02}, 32)
+	for _, row := range []struct {
+		id            []byte
+		burnAfterOpen int
+	}{{burnID, 1}, {reusableID, 0}} {
+		if _, err := db.Exec(`
+			INSERT INTO shares (
+				id, encrypted_blob, crypto_version, created_at, expires_at,
+				burn_after_open, revoke_token_hash, size_bytes
+			) VALUES (?, ?, 1, 1000, 2000, ?, ?, 7)`,
+			row.id, []byte("payload"), row.burnAfterOpen, bytes.Repeat([]byte{0x03}, 32)); err != nil {
+			t.Fatalf("insert legacy share: %v", err)
+		}
+	}
+
+	if err := Migrate(t.Context(), db); err != nil {
+		t.Fatalf("Migrate() error = %v", err)
+	}
+
+	for _, tt := range []struct {
+		want *int64
+		name string
+		id   []byte
+	}{
+		{name: "burn after open", id: burnID, want: new(int64(1))},
+		{name: "reusable", id: reusableID, want: nil},
+	} {
+		var got *int64
+		if err := db.QueryRow(`SELECT views_left FROM shares WHERE id = ?`, tt.id).Scan(&got); err != nil {
+			t.Fatalf("read %s views_left: %v", tt.name, err)
+		}
+		switch {
+		case tt.want == nil && got != nil:
+			t.Fatalf("%s views_left = %d, want NULL", tt.name, *got)
+		case tt.want != nil && got == nil:
+			t.Fatalf("%s views_left = NULL, want %d", tt.name, *tt.want)
+		case tt.want != nil && *got != *tt.want:
+			t.Fatalf("%s views_left = %d, want %d", tt.name, *got, *tt.want)
+		}
+	}
+
+	// The rebuild drops the table, so the expiry index must have been recreated.
+	var index string
+	if err := db.QueryRow(`
+		SELECT name FROM sqlite_master
+		WHERE type = 'index' AND name = 'shares_expiry_idx'`).Scan(&index); err != nil {
+		t.Fatalf("find shares_expiry_idx: %v", err)
 	}
 }
 
@@ -68,6 +144,18 @@ func openTestDB(t *testing.T) (*sql.DB, error) {
 	t.Helper()
 
 	return sql.Open("sqlite", filepath.Join(t.TempDir(), "sharelock.db"))
+}
+
+func assertColumnExists(t *testing.T, db *sql.DB, table, column string) {
+	t.Helper()
+	var count int
+	if err := db.QueryRow(`
+		SELECT COUNT(*) FROM pragma_table_info(?) WHERE name = ?`, table, column).Scan(&count); err != nil {
+		t.Fatalf("inspect %s.%s: %v", table, column, err)
+	}
+	if count != 1 {
+		t.Fatalf("column %s.%s not found", table, column)
+	}
 }
 
 func assertTableExists(t *testing.T, db *sql.DB, name string) {

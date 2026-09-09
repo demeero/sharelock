@@ -13,10 +13,6 @@
             "readOnly": true,
             "type": "string"
           },
-          "burn_after_open": {
-            "description": "Delete the blob after its first successful read.",
-            "type": "boolean"
-          },
           "envelope": {
             "description": "Opaque, browser-encrypted share envelope.",
             "type": "string"
@@ -25,12 +21,16 @@
             "description": "Lifetime in seconds.",
             "format": "int64",
             "type": "integer"
+          },
+          "views": {
+            "description": "Number of allowed opens. Omit to allow opens until expiration.",
+            "format": "int64",
+            "type": "integer"
           }
         },
         "required": [
           "envelope",
-          "expires_in_seconds",
-          "burn_after_open"
+          "expires_in_seconds"
         ],
         "type": "object"
       },
@@ -176,9 +176,18 @@
           "envelope": {
             "description": "Opaque, browser-encrypted share envelope.",
             "type": "string"
+          },
+          "views_left": {
+            "description": "Opens left after this one. Null when there is no limit.",
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
           }
         },
         "required": [
+          "views_left",
           "envelope",
           "burned"
         ],
@@ -206,11 +215,18 @@
             "description": "Maximum share lifetime in seconds.",
             "format": "int64",
             "type": "integer"
+          },
+          "max_views": {
+            "description": "Maximum number of opens a share may allow.",
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
           }
         },
         "required": [
           "max_encrypted_bytes",
-          "max_ttl_seconds"
+          "max_ttl_seconds",
+          "max_views"
         ],
         "type": "object"
       }

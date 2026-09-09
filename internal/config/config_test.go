@@ -78,6 +78,7 @@ func unsetConfigEnv(t *testing.T) {
 		"TLS_CERT_KEY_FILE",
 		"SHARE_MAX_ENCRYPTED_BYTES",
 		"SHARE_MAX_TTL",
+		"SHARE_MAX_VIEWS",
 		"SHARE_VACUUM_INTERVAL",
 		"SHARE_IDENTIFIER_SIZE",
 	} {

@@ -12,10 +12,11 @@ import (
 )
 
 // CreateInput is the server-visible part of a newly created share.
+// A nil Views means the share stays readable until it expires.
 type CreateInput struct {
+	Views         *int64
 	EncryptedBlob []byte
 	ExpiresIn     time.Duration
-	BurnAfterOpen bool
 	CryptoVersion int
 }
 
@@ -29,26 +30,28 @@ type CreatedShare struct {
 type createDBInput struct {
 	CreatedAt       time.Time
 	ExpiresAt       time.Time
+	ViewsLeft       *int64
 	ID              []byte
 	EncryptedBlob   []byte
 	RevokeTokenHash []byte
 	CryptoVersion   int
-	BurnAfterOpen   bool
 }
 
 type CreateShare struct {
 	db                *sql.DB
 	maxEncryptedBytes uint
 	identifierSize    uint
+	maxViews          uint
 	maxTTL            time.Duration
 }
 
-func NewCreateShare(db *sql.DB, maxEncryptedBytes, identifierSize uint, maxTTL time.Duration) *CreateShare {
+func NewCreateShare(db *sql.DB, maxEncryptedBytes, identifierSize, maxViews uint, maxTTL time.Duration) *CreateShare {
 	return &CreateShare{
 		db:                db,
 		maxEncryptedBytes: maxEncryptedBytes,
 		maxTTL:            maxTTL,
 		identifierSize:    identifierSize,
+		maxViews:          maxViews,
 	}
 }
 
@@ -59,6 +62,9 @@ func (c *CreateShare) Exec(ctx context.Context, input CreateInput) (CreatedShare
 	}
 	if input.ExpiresIn <= 0 || input.ExpiresIn > c.maxTTL {
 		return CreatedShare{}, fmt.Errorf("%w: expiration must be between 1 and %.0f seconds", errbrick.ErrInvalidData, c.maxTTL.Seconds())
+	}
+	if input.Views != nil && (*input.Views < 1 || *input.Views > int64(c.maxViews)) {
+		return CreatedShare{}, fmt.Errorf("%w: views must be between 1 and %d", errbrick.ErrInvalidData, c.maxViews)
 	}
 	if input.CryptoVersion != 1 {
 		return CreatedShare{}, fmt.Errorf("%w: crypto version", errbrick.ErrInvalidData)
@@ -82,7 +88,7 @@ func (c *CreateShare) Exec(ctx context.Context, input CreateInput) (CreatedShare
 		CryptoVersion:   input.CryptoVersion,
 		CreatedAt:       now,
 		ExpiresAt:       now.Add(input.ExpiresIn),
-		BurnAfterOpen:   input.BurnAfterOpen,
+		ViewsLeft:       input.Views,
 		RevokeTokenHash: hash[:],
 	}
 	if err := c.insert(ctx, dbInput); err != nil {
@@ -99,25 +105,17 @@ func (c *CreateShare) insert(ctx context.Context, input createDBInput) error {
 	_, err := c.db.ExecContext(ctx, `
 		INSERT INTO shares (
 			id, encrypted_blob, crypto_version, created_at, expires_at,
-			burn_after_open, revoke_token_hash, size_bytes
+			views_left, revoke_token_hash, size_bytes
 		) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
 		input.ID,
 		input.EncryptedBlob,
 		input.CryptoVersion,
 		input.CreatedAt.Unix(),
 		input.ExpiresAt.Unix(),
-		boolToInteger(input.BurnAfterOpen),
+		input.ViewsLeft,
 		input.RevokeTokenHash,
 		len(input.EncryptedBlob),
 	)
 
 	return err
-}
-
-func boolToInteger(value bool) int {
-	if value {
-		return 1
-	}
-
-	return 0
 }

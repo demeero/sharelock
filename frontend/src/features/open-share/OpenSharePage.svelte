@@ -16,6 +16,7 @@
   const revokeToken = fragment.get("revoke");
   let items = $state<EncryptedItem[] | null>(null);
   let burned = $state(false);
+  let viewsLeft = $state<number | null>(null);
   let busy = $state(false);
   let error = $state("");
   let errorStatus = $state("UNAVAILABLE");
@@ -51,6 +52,7 @@
         throw new Error("The decryption key is invalid or the encrypted payload is damaged.");
       }
       burned = data.burned;
+      viewsLeft = data.views_left;
     } catch (caught) {
       error = caught instanceof Error ? caught.message : "Could not decrypt this share.";
     } finally {
@@ -193,7 +195,13 @@
           <Notice
             status="BURNED"
             tone="yellow"
-            message="This share was deleted from the server after this open."
+            message="That was the last allowed open. This share was deleted from the server."
+          />
+        {:else if viewsLeft !== null}
+          <Notice
+            status="OPENS LEFT"
+            tone="yellow"
+            message={`This share can be opened ${viewsLeft} more ${viewsLeft === 1 ? "time" : "times"} before it is deleted.`}
           />
         {/if}
         <div is-="column" gap-="2">

@@ -11,7 +11,7 @@ The browser encrypts every item before upload. The SQLite database stores only a
 - a single Go binary and an embedded SQLite database;
 - browser-side AES-256-GCM encryption using the Web Crypto API;
 - multiple text or file items in one share;
-- fixed expiration and optional burn-after-first-open;
+- fixed expiration and an optional limit on how many times a share may be opened;
 - a separate revoke capability returned only at creation time;
 - a small terminal-style Web UI, compiled to static assets and embedded in the Go binary;
 - liveness and readiness probes for container orchestrators.
@@ -27,7 +27,7 @@ Creating a share, copying the link, and opening it once as the recipient:
 <details>
 <summary>Screenshots</summary>
 
-**Create a share.** Paste text or attach a file, choose an expiration, and optionally burn the share after the first open. The payload is encrypted before the request leaves the browser.
+**Create a share.** Paste text or attach a file, choose an expiration, and optionally cap how many times the share may be opened. The payload is encrypted before the request leaves the browser.
 
 ![Create encrypted share form with a filled payload and delivery policy](docs/media/create-share.png)
 
@@ -39,7 +39,7 @@ Creating a share, copying the link, and opening it once as the recipient:
 
 ![Sealed share waiting to be decrypted in the browser](docs/media/open-sealed.png)
 
-**Decrypted payloads.** Plaintext exists only in that browser tab. A burn-after-open share is deleted from the server on this first open.
+**Decrypted payloads.** Plaintext exists only in that browser tab. A share with an open limit reports how many opens are left, and is deleted from the server on the last one.
 
 ![Decrypted payload with a burned-after-open notice](docs/media/decrypted.png)
 
@@ -171,6 +171,7 @@ Sharelock reads its runtime configuration from environment variables.
 | `TLS_CERT_KEY_FILE`         | Path to the TLS private-key PEM file. Must be set together with `TLS_CERT_FILE`.                     | Disabled              |
 | `SHARE_MAX_ENCRYPTED_BYTES` | Maximum ciphertext bundle size accepted when creating a share.                                       | `10485760` (10 MiB)   |
 | `SHARE_MAX_TTL`             | Maximum lifetime that may be requested for a share.                                                  | `720h` (30 days)      |
+| `SHARE_MAX_VIEWS`           | Maximum number of opens that may be requested for a share.                                           | `100`                 |
 | `SHARE_VACUUM_INTERVAL`     | Interval for removing expired or consumed shares.                                                    | `1h`                  |
 | `SHARE_IDENTIFIER_SIZE`     | Number of random bytes in each share and revoke identifier before URL-safe Base64 encoding.          | `32`                  |
 | `LOG_LEVEL`                 | Minimum structured log level. Invalid values fall back to `info`.                                    | `info`                |
@@ -237,7 +238,9 @@ docker run -d \
 
 The service protects a stolen SQLite file from revealing content, because it contains ciphertext only. It does **not** protect against a malicious or compromised live server serving altered JavaScript; Use HTTPS, keep all static assets local, and share the URL only through a trusted channel.
 
-“Burn after first open” guarantees that Sharelock will not serve the blob again after the first successful request. It cannot physically erase bytes already present in a filesystem snapshot, SQLite WAL, or backup; apply a short backup retention policy when that matters.
+A share may carry an open limit. Each successful read claims one open, and the record is deleted on the last one; a share created without a limit stays readable until it expires. Claiming an open is a single atomic statement, so concurrent readers can never consume more opens than the share was created with.
+
+The open limit guarantees that Sharelock will not serve the blob again once it is exhausted. It cannot physically erase bytes already present in a filesystem snapshot, SQLite WAL, or backup; apply a short backup retention policy when that matters.
 
 ## Releases and Conventional Commits
 

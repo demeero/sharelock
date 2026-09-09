@@ -6,12 +6,14 @@ const (
 	defaultMaxShareBytes  = 10 << 20
 	defaultMaxTTL         = 30 * 24 * time.Hour
 	defaultIdentifierSize = 32
+	defaultMaxViews       = 100
 )
 
 type ShareConfig struct {
 	MaxEncryptedBytes uint
 	MaxTTL            time.Duration
 	IdentifierSize    uint
+	MaxViews          uint
 	VacuumInterval    time.Duration
 }
 
@@ -32,11 +34,16 @@ func loadShare() (ShareConfig, error) {
 	if err != nil {
 		return ShareConfig{}, err
 	}
+	maxViews, err := EnvUint("SHARE_MAX_VIEWS", defaultMaxViews)
+	if err != nil {
+		return ShareConfig{}, err
+	}
 
 	cfg := ShareConfig{
 		MaxEncryptedBytes: maxEncryptedBytes,
 		MaxTTL:            maxTTL,
 		IdentifierSize:    identifierSize,
+		MaxViews:          maxViews,
 		VacuumInterval:    vacuumInterval,
 	}
 
@@ -57,6 +64,9 @@ func (cfg ShareConfig) validate() error {
 	}
 	if cfg.MaxEncryptedBytes <= 0 {
 		validationErrors = append(validationErrors, "SHARE_MAX_ENCRYPTED_BYTES must be a positive integer")
+	}
+	if cfg.MaxViews <= 0 {
+		validationErrors = append(validationErrors, "SHARE_MAX_VIEWS must be a positive integer")
 	}
 
 	return validate("Share configuration", validationErrors)

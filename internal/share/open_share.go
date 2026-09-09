@@ -5,19 +5,22 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/demeero/sharelock/internal/errbrick"
 )
 
+// OpenedShare is a share whose view was claimed by the caller. A nil ViewsLeft
+// means the share has no open limit; zero means this read consumed the last
+// view and the record was deleted.
 type OpenedShare struct {
-	CreatedAt       time.Time
-	ExpiresAt       time.Time
-	ID              []byte
-	EncryptedBlob   []byte
-	RevokeTokenHash []byte
-	CryptoVersion   int
-	BurnAfterOpen   bool
+	CreatedAt     time.Time
+	ExpiresAt     time.Time
+	ViewsLeft     *int64
+	ID            []byte
+	EncryptedBlob []byte
+	CryptoVersion int
 }
 
 type OpenShare struct {
@@ -32,108 +35,75 @@ func NewOpenShare(db *sql.DB, identifierSize uint) *OpenShare {
 	}
 }
 
-// Exec returns an available encrypted share.
+// Exec claims one view of an available encrypted share and returns it. Claiming
+// and deleting the last view happen in a single transaction, so concurrent
+// readers can never consume more views than the share was created with.
 func (c *OpenShare) Exec(ctx context.Context, id string) (OpenedShare, error) {
 	decodedID, err := Decode(id, c.identifierSize)
 	if err != nil {
 		return OpenedShare{}, fmt.Errorf("identifier: %w", err)
 	}
 
-	isBurnAfterOpen, err := c.isBurnAfterOpen(ctx, decodedID, time.Now().UTC())
+	tx, err := c.db.BeginTx(ctx, nil)
 	if err != nil {
-		return OpenedShare{}, err
+		return OpenedShare{}, fmt.Errorf("begin open transaction: %w", err)
 	}
-
-	if isBurnAfterOpen {
-		record, err := c.popFromDB(ctx, decodedID, time.Now().UTC())
-		if err != nil {
-			return OpenedShare{}, err
+	defer func() {
+		// A rollback after Commit returns ErrTxDone and is expected here.
+		if err := tx.Rollback(); err != nil && !errors.Is(err, sql.ErrTxDone) {
+			slog.ErrorContext(ctx, "rollback open transaction", "error", err)
 		}
+	}()
 
-		return record, nil
-	}
-
-	record, err := c.loadFromDB(ctx, decodedID, time.Now().UTC())
+	record, err := claimView(ctx, tx, decodedID, time.Now().UTC())
 	if err != nil {
 		return OpenedShare{}, err
 	}
 
+	if record.ViewsLeft != nil && *record.ViewsLeft == 0 {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM shares WHERE id = ?`, decodedID); err != nil {
+			return OpenedShare{}, fmt.Errorf("delete consumed share: %w", err)
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return OpenedShare{}, fmt.Errorf("commit open transaction: %w", err)
+	}
+
 	return record, nil
 }
 
-func (c *OpenShare) isBurnAfterOpen(ctx context.Context, id []byte, now time.Time) (bool, error) {
-	var burnAfterOpen int
-
-	err := c.db.QueryRowContext(ctx, `
-		SELECT burn_after_open
-		FROM shares
-		WHERE id = ? AND expires_at > ?`, id, now.Unix()).Scan(&burnAfterOpen)
-	if errors.Is(err, sql.ErrNoRows) {
-		return false, errbrick.ErrNotFound
-	}
-	if err != nil {
-		return false, fmt.Errorf("check burn-after-open: %w", err)
-	}
-
-	return burnAfterOpen == 1, nil
-}
-
-func (c *OpenShare) popFromDB(ctx context.Context, id []byte, now time.Time) (OpenedShare, error) {
+// claimView decrements the remaining views and returns the share in one
+// statement. A NULL views_left stays NULL because NULL - 1 is NULL, so shares
+// without an open limit are never consumed. This write is the transaction's
+// first statement on purpose: it takes the write lock immediately instead of
+// upgrading from a read snapshot, which in WAL mode can fail with
+// SQLITE_BUSY_SNAPSHOT that busy_timeout does not retry.
+func claimView(ctx context.Context, tx *sql.Tx, id []byte, now time.Time) (OpenedShare, error) {
 	var record OpenedShare
 	var createdAt, expiresAt int64
-	var burnAfterOpen int
 
-	err := c.db.QueryRowContext(ctx, `
-		DELETE FROM shares
+	err := tx.QueryRowContext(ctx, `
+		UPDATE shares
+		SET views_left = views_left - 1
 		WHERE id = ?
-		  AND burn_after_open = 1
 		  AND expires_at > ?
-		RETURNING encrypted_blob, crypto_version, created_at, expires_at, burn_after_open`, id, now.Unix()).Scan(
+		  AND (views_left IS NULL OR views_left > 0)
+		RETURNING encrypted_blob, crypto_version, created_at, expires_at, views_left`, id, now.Unix()).Scan(
 		&record.EncryptedBlob,
 		&record.CryptoVersion,
 		&createdAt,
 		&expiresAt,
-		&burnAfterOpen,
+		&record.ViewsLeft,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return OpenedShare{}, errbrick.ErrNotFound
 	}
 	if err != nil {
-		return OpenedShare{}, fmt.Errorf("delete and return burn-after-open share: %w", err)
+		return OpenedShare{}, fmt.Errorf("claim share view: %w", err)
 	}
 
 	record.ID = id
-	record.CreatedAt = time.Unix(createdAt, 0).UTC()
-	record.ExpiresAt = time.Unix(expiresAt, 0).UTC()
-	record.BurnAfterOpen = burnAfterOpen == 1
-
-	return record, nil
-}
-
-func (c *OpenShare) loadFromDB(ctx context.Context, id []byte, now time.Time) (OpenedShare, error) {
-	var record OpenedShare
-	var createdAt, expiresAt int64
-	var burnAfterOpen int
-
-	err := c.db.QueryRowContext(ctx, `
-		SELECT encrypted_blob, crypto_version, created_at, expires_at, burn_after_open
-		FROM shares
-		WHERE id = ? AND burn_after_open = 0 AND expires_at > ?`, id, now.Unix()).Scan(
-		&record.EncryptedBlob,
-		&record.CryptoVersion,
-		&createdAt,
-		&expiresAt,
-		&burnAfterOpen,
-	)
-	if errors.Is(err, sql.ErrNoRows) {
-		return OpenedShare{}, errbrick.ErrNotFound
-	}
-	if err != nil {
-		return OpenedShare{}, fmt.Errorf("select share: %w", err)
-	}
-
-	record.ID = id
-	record.BurnAfterOpen = burnAfterOpen == 1
 	record.CreatedAt = time.Unix(createdAt, 0).UTC()
 	record.ExpiresAt = time.Unix(expiresAt, 0).UTC()
 

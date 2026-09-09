@@ -16,7 +16,7 @@ type Share struct {
 }
 
 func New(cfg config.ShareConfig, api huma.API, db *sql.DB) *Share {
-	createShare := NewCreateShare(db, cfg.MaxEncryptedBytes, cfg.IdentifierSize, cfg.MaxTTL)
+	createShare := NewCreateShare(db, cfg.MaxEncryptedBytes, cfg.IdentifierSize, cfg.MaxViews, cfg.MaxTTL)
 	openShare := NewOpenShare(db, cfg.IdentifierSize)
 	revokeShare := NewRevokeShare(db, cfg.IdentifierSize)
 	vacuumShare := NewVacuum(db)

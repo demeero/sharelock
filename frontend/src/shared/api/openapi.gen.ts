@@ -83,8 +83,6 @@ export interface components {
              * @example https://example.com/schemas/CreateShareReqBody.json
              */
             readonly $schema?: string;
-            /** @description Delete the blob after its first successful read. */
-            burn_after_open: boolean;
             /** @description Opaque, browser-encrypted share envelope. */
             envelope: string;
             /**
@@ -92,6 +90,11 @@ export interface components {
              * @description Lifetime in seconds.
              */
             expires_in_seconds: number;
+            /**
+             * Format: int64
+             * @description Number of allowed opens. Omit to allow opens until expiration.
+             */
+            views?: number;
         };
         CreateShareRespBody: {
             /**
@@ -171,6 +174,11 @@ export interface components {
             burned: boolean;
             /** @description Opaque, browser-encrypted share envelope. */
             envelope: string;
+            /**
+             * Format: int64
+             * @description Opens left after this one. Null when there is no limit.
+             */
+            views_left: number | null;
         };
         ShareSettingsRespBody: {
             /**
@@ -189,6 +197,11 @@ export interface components {
              * @description Maximum share lifetime in seconds.
              */
             max_ttl_seconds: number;
+            /**
+             * Format: int64
+             * @description Maximum number of opens a share may allow.
+             */
+            max_views: number;
         };
     };
     responses: never;

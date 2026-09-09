@@ -26,11 +26,16 @@
   let nextID = 1;
   let items = $state<DraftItem[]>([newDraftItem()]);
   let expiresInSeconds = $state("");
-  let burnAfterOpen = $state(false);
+  let limitOpens = $state(false);
+  let allowedOpens = $state<number | undefined>(1);
   let busy = $state(false);
   let error = $state("");
   let created = $state<{ revokeURL: string; shareURL: string } | null>(null);
-  let settings = $state<{ max_encrypted_bytes: number; max_ttl_seconds: number } | null>(null);
+  let settings = $state<{
+    max_encrypted_bytes: number;
+    max_ttl_seconds: number;
+    max_views: number;
+  } | null>(null);
   let settingsLoading = $state(true);
   let settingsError = $state("");
 
@@ -43,8 +48,20 @@
       0,
     ),
   );
+  // Clearing the number input leaves allowedOpens undefined, so the label falls
+  // back instead of rendering "undefined opens" until a valid count is typed.
+  let openPolicyLabel = $derived.by(() => {
+    if (!limitOpens) {
+      return "unlimited opens";
+    }
+    if (!Number.isSafeInteger(allowedOpens)) {
+      return "open limit not set";
+    }
+
+    return `${allowedOpens} ${allowedOpens === 1 ? "open" : "opens"}`;
+  });
   let summary = $derived(
-    `${payloadCount} ${payloadCount === 1 ? "payload" : "payloads"} · ${formatBytes(totalBytes)} · expires in ${selectedExpiryLabel} · ${burnAfterOpen ? "burn after open" : "reusable"}`,
+    `${payloadCount} ${payloadCount === 1 ? "payload" : "payloads"} · ${formatBytes(totalBytes)} · expires in ${selectedExpiryLabel} · ${openPolicyLabel}`,
   );
 
   onMount(() => {
@@ -97,6 +114,10 @@
         settingsError = "The server returned an invalid maximum share lifetime.";
         return;
       }
+      if (!Number.isSafeInteger(data.max_views) || data.max_views < 1) {
+        settingsError = "The server returned an invalid maximum number of opens.";
+        return;
+      }
 
       settings = data;
       expiresInSeconds = String(defaultExpirySeconds(options));
@@ -119,6 +140,9 @@
       if (encryptedItems.length === 0) {
         throw new Error("Add at least one non-empty text value or file.");
       }
+      if (limitOpens && !isAllowedOpenCount(allowedOpens, settings.max_views)) {
+        throw new Error(`Choose between 1 and ${settings.max_views} opens.`);
+      }
 
       const expectedEnvelopeBytes = encryptedEnvelopeByteLength(encryptedItems);
       if (expectedEnvelopeBytes > settings.max_encrypted_bytes) {
@@ -138,7 +162,7 @@
         body: {
           envelope,
           expires_in_seconds: Number(expiresInSeconds),
-          burn_after_open: burnAfterOpen,
+          views: limitOpens ? allowedOpens : undefined,
         },
       });
       if (!data) {
@@ -197,6 +221,10 @@
         seconds,
         label: formatDuration(seconds),
       }));
+  }
+
+  function isAllowedOpenCount(count: number | undefined, maxViews: number): count is number {
+    return count !== undefined && Number.isSafeInteger(count) && count >= 1 && count <= maxViews;
   }
 
   function defaultExpirySeconds(options: ExpiryOption[]): number {
@@ -328,7 +356,10 @@
             <section box-="square" shear-="top" is-="column" gap-="1">
               <div is-="row" wrap- align-="center between" gap-="1">
                 <span is-="badge" variant-="background0">DELIVERY POLICY</span>
-                <span is-="badge" variant-="background2">{selectedExpiryLabel}</span>
+                <div is-="row" wrap- align-="center end" gap-="1">
+                  <span is-="badge" variant-="background2">{selectedExpiryLabel}</span>
+                  <span is-="badge" variant-="background2">{openPolicyLabel}</span>
+                </div>
               </div>
               <div pad-="1" is-="column" gap-="1">
                 <p>Expires after</p>
@@ -354,13 +385,29 @@
                   {/each}
                 </div>
                 <label
-                  ><input
-                    is-="switch"
-                    type="checkbox"
-                    bind:checked={burnAfterOpen}
-                    disabled={busy}
-                  /> Burn after first open</label
+                  ><input is-="switch" type="checkbox" bind:checked={limitOpens} disabled={busy} /> Limit
+                  number of opens</label
                 >
+                {#if limitOpens}
+                  <label is-="column" gap-="1">
+                    <span
+                      >Opens allowed <mark fg-="foreground2">(1-{settings.max_views})</mark></span
+                    >
+                    <input
+                      type="number"
+                      min="1"
+                      max={settings.max_views}
+                      step="1"
+                      bind:value={allowedOpens}
+                      disabled={busy}
+                    />
+                  </label>
+                  <p>
+                    <mark fg-="foreground2"
+                      >The share is deleted from the server on its last allowed open.</mark
+                    >
+                  </p>
+                {/if}
               </div>
             </section>
 

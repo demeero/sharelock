@@ -18,6 +18,7 @@ func TestLoadShare_UsesDefaults(t *testing.T) {
 		MaxEncryptedBytes: defaultMaxShareBytes,
 		MaxTTL:            defaultMaxTTL,
 		IdentifierSize:    defaultIdentifierSize,
+		MaxViews:          defaultMaxViews,
 		VacuumInterval:    time.Hour,
 	}, cfg)
 }
@@ -28,6 +29,7 @@ func TestLoadShare_UsesEnvironmentValues(t *testing.T) {
 	t.Setenv("SHARE_MAX_TTL", "48h")
 	t.Setenv("SHARE_VACUUM_INTERVAL", "30m")
 	t.Setenv("SHARE_IDENTIFIER_SIZE", "16")
+	t.Setenv("SHARE_MAX_VIEWS", "25")
 
 	cfg, err := loadShare()
 
@@ -36,6 +38,7 @@ func TestLoadShare_UsesEnvironmentValues(t *testing.T) {
 		MaxEncryptedBytes: 2048,
 		MaxTTL:            48 * time.Hour,
 		IdentifierSize:    16,
+		MaxViews:          25,
 		VacuumInterval:    30 * time.Minute,
 	}, cfg)
 }
@@ -61,6 +64,7 @@ func TestShareConfigValidate(t *testing.T) {
 				MaxEncryptedBytes: 1,
 				MaxTTL:            time.Second,
 				IdentifierSize:    1,
+				MaxViews:          1,
 				VacuumInterval:    time.Second,
 			},
 		},
@@ -69,7 +73,8 @@ func TestShareConfigValidate(t *testing.T) {
 			cfg:  ShareConfig{},
 			errorString: "Share configuration errors:\n- SHARE_MAX_TTL must be a positive duration\n- " +
 				"SHARE_VACUUM_INTERVAL must be a positive duration\n- SHARE_IDENTIFIER_SIZE must be a positive integer\n- " +
-				"SHARE_MAX_ENCRYPTED_BYTES must be a positive integer",
+				"SHARE_MAX_ENCRYPTED_BYTES must be a positive integer\n- " +
+				"SHARE_MAX_VIEWS must be a positive integer",
 		},
 	}
 
