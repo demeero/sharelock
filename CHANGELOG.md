@@ -1,3 +1,13 @@
+## [2.0.0] - 2026-09-09
+
+### 🚀 Features
+
+- *(shares)* [**breaking**] Limit shares by number of opens
+- *(http)* Allow disabling OpenAPI/Swagger UI endpoints
+
+### 🧪 Testing
+
+- *(back)* Remove t.Parallel from server tests to avoid race
 ## [1.1.0] - 2026-09-08
 
 ### 🚀 Features
