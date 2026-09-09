@@ -9,8 +9,6 @@ import (
 )
 
 func TestSetupAPI_ServesDocsByDefault(t *testing.T) {
-	t.Parallel()
-
 	mux := http.NewServeMux()
 	setupAPI("1.0.0", mux, false)
 
@@ -22,8 +20,6 @@ func TestSetupAPI_ServesDocsByDefault(t *testing.T) {
 }
 
 func TestSetupAPI_DisablesDocsWhenConfigured(t *testing.T) {
-	t.Parallel()
-
 	mux := http.NewServeMux()
 	setupAPI("1.0.0", mux, true)
 

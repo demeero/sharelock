@@ -23,7 +23,6 @@ import (
 )
 
 func TestShareHTTPFlow(t *testing.T) {
-	t.Parallel()
 	cfg := config.Config{
 		HTTP:  config.HTTPConfig{Addr: ":0", ReadHeaderTimeout: time.Second, ReadTimeout: time.Second, WriteTimeout: time.Second},
 		DB:    config.DBConfig{Path: filepath.Join(t.TempDir(), "sharelock.db"), MaxOpenConns: 1, MaxIdleConns: 1, StartupTimeout: time.Second},
@@ -96,7 +95,6 @@ func TestShareHTTPFlow(t *testing.T) {
 // TestShareHTTPFlow_UnlimitedViews covers a share created without a view limit:
 // it stays readable and reports no remaining-view count.
 func TestShareHTTPFlow_UnlimitedViews(t *testing.T) {
-	t.Parallel()
 	server := newTestServer(t)
 
 	created := createTestShare(t, server, nil)
@@ -112,7 +110,6 @@ func TestShareHTTPFlow_UnlimitedViews(t *testing.T) {
 }
 
 func TestShareHTTPFlow_RejectsViewsAboveMax(t *testing.T) {
-	t.Parallel()
 	server := newTestServer(t)
 
 	body, err := json.Marshal(map[string]any{
