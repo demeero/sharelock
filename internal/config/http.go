@@ -23,6 +23,7 @@ type HTTPConfig struct {
 	WriteTimeout      time.Duration
 	IdleTimeout       time.Duration
 	ShutdownTimeout   time.Duration
+	DisableAPIDocs    bool
 }
 
 func loadHTTP() (HTTPConfig, error) {
@@ -46,6 +47,10 @@ func loadHTTP() (HTTPConfig, error) {
 	if err != nil {
 		return HTTPConfig{}, err
 	}
+	disableAPIDocs, err := EnvBool("HTTP_DISABLE_API_DOCS", false)
+	if err != nil {
+		return HTTPConfig{}, err
+	}
 
 	cfg := HTTPConfig{
 		Addr:              Env("HTTP_ADDR", defaultHTTPAddr),
@@ -56,6 +61,7 @@ func loadHTTP() (HTTPConfig, error) {
 		ShutdownTimeout:   shutdownTimeout,
 		TLSCertFile:       Env("TLS_CERT_FILE", ""),
 		TLSKeyFile:        Env("TLS_CERT_KEY_FILE", ""),
+		DisableAPIDocs:    disableAPIDocs,
 	}
 
 	return cfg, cfg.validate()

@@ -19,10 +19,14 @@ type apiContainer struct {
 	Shares *huma.Group
 }
 
-func setupAPI(ver string, mux humago.Mux) apiContainer {
+func setupAPI(ver string, mux humago.Mux, disableAPIDocs bool) apiContainer {
 	configureErrorHandler()
 
 	apiConfig := huma.DefaultConfig("Sharelock API", ver)
+	if disableAPIDocs {
+		apiConfig.OpenAPIPath = ""
+		apiConfig.DocsPath = ""
+	}
 
 	api := humago.New(mux, apiConfig)
 

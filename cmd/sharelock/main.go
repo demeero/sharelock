@@ -42,7 +42,7 @@ func main() {
 	}
 
 	mux := http.NewServeMux()
-	api := setupAPI(cfg.Version, mux)
+	api := setupAPI(cfg.Version, mux, cfg.HTTP.DisableAPIDocs)
 
 	shareService := share.New(cfg.Share, api.Shares, db)
 

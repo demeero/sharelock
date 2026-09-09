@@ -34,6 +34,7 @@ func TestLoadHTTP_UsesEnvironmentValues(t *testing.T) {
 	t.Setenv("HTTP_SHUTDOWN_TIMEOUT", "6s")
 	t.Setenv("TLS_CERT_FILE", "cert.pem")
 	t.Setenv("TLS_CERT_KEY_FILE", "key.pem")
+	t.Setenv("HTTP_DISABLE_API_DOCS", "true")
 
 	cfg, err := loadHTTP()
 
@@ -47,6 +48,7 @@ func TestLoadHTTP_UsesEnvironmentValues(t *testing.T) {
 		WriteTimeout:      4 * time.Second,
 		IdleTimeout:       5 * time.Second,
 		ShutdownTimeout:   6 * time.Second,
+		DisableAPIDocs:    true,
 	}, cfg)
 }
 
@@ -57,6 +59,15 @@ func TestLoadHTTP_ReturnsParsingError(t *testing.T) {
 	_, err := loadHTTP()
 
 	require.ErrorContains(t, err, "HTTP_READ_TIMEOUT must be a duration")
+}
+
+func TestLoadHTTP_ReturnsErrorForInvalidDisableAPIDocs(t *testing.T) {
+	unsetConfigEnv(t)
+	t.Setenv("HTTP_DISABLE_API_DOCS", "not-a-bool")
+
+	_, err := loadHTTP()
+
+	require.ErrorContains(t, err, `env "HTTP_DISABLE_API_DOCS" must be a boolean`)
 }
 
 func TestHTTPConfigValidate(t *testing.T) {

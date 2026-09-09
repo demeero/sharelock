@@ -167,6 +167,7 @@ Sharelock reads its runtime configuration from environment variables.
 | `HTTP_WRITE_TIMEOUT`        | Maximum time to write an HTTP response.                                                              | `30s`                 |
 | `HTTP_IDLE_TIMEOUT`         | Maximum time to keep an idle HTTP connection open; also used as the graceful HTTP shutdown deadline. | `60s`                 |
 | `HTTP_SHUTDOWN_TIMEOUT`     | HTTP server shutdown timeout                                                                         | `10s`                 |
+| `HTTP_DISABLE_API_DOCS`     | Disable the `/openapi.json` and `/docs` (Swagger UI) endpoints.                                      | `false`               |
 | `TLS_CERT_FILE`             | Path to the TLS certificate PEM file. Must be set together with `TLS_CERT_KEY_FILE`.                 | Disabled              |
 | `TLS_CERT_KEY_FILE`         | Path to the TLS private-key PEM file. Must be set together with `TLS_CERT_FILE`.                     | Disabled              |
 | `SHARE_MAX_ENCRYPTED_BYTES` | Maximum ciphertext bundle size accepted when creating a share.                                       | `10485760` (10 MiB)   |
