@@ -50,17 +50,17 @@ func Migrate(ctx context.Context, db *sql.DB) error {
 
 	err = migration.Up()
 	if errors.Is(err, migrate.ErrNoChange) {
-		slog.Info("no database migrations to apply")
+		slog.Info("no db migrations to apply")
 		return nil
 	}
 	if err != nil {
-		return fmt.Errorf("apply database migrations: %w", err)
+		return fmt.Errorf("apply db migrations: %w", err)
 	}
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("check migration context: %w", err)
 	}
 
-	slog.Info("database migrations applied")
+	slog.Info("db migrations applied")
 
 	return nil
 }

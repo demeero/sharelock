@@ -1,5 +1,5 @@
 import { svelte } from "@sveltejs/vite-plugin-svelte";
-import { defineConfig } from "vite";
+import { defineConfig } from "vitest/config";
 
 export default defineConfig({
   base: "/assets/app/",
@@ -14,5 +14,9 @@ export default defineConfig({
       "/api": "http://127.0.0.1:8080",
       "/assets": "http://127.0.0.1:8080",
     },
+  },
+  test: {
+    environment: "node",
+    setupFiles: "./vitest.setup.ts",
   },
 });

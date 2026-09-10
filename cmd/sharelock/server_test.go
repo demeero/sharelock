@@ -47,7 +47,7 @@ func TestShareHTTPFlow(t *testing.T) {
 	openAPIDocument := httptest.NewRecorder()
 	server.handler.ServeHTTP(openAPIDocument, httptest.NewRequest(http.MethodGet, "/openapi.json", http.NoBody))
 	require.Equalf(t, http.StatusOK, openAPIDocument.Code, "GET /openapi.json body = %s", openAPIDocument.Body.String())
-	for _, operationID := range []string{"createShare", "openShare", "revokeShare", "getShareSettings"} {
+	for _, operationID := range []string{"createShare", "getShareAccess", "openShare", "revokeShare", "getShareSettings"} {
 		require.Contains(t, openAPIDocument.Body.String(), "\"operationId\":\""+operationID+"\"")
 	}
 
@@ -90,6 +90,13 @@ func TestShareHTTPFlow(t *testing.T) {
 	openRevoked := httptest.NewRecorder()
 	server.handler.ServeHTTP(openRevoked, httptest.NewRequest(http.MethodPost, "/api/v1/shares/"+revocable.ID+"/open", http.NoBody))
 	require.Equal(t, http.StatusNotFound, openRevoked.Code)
+
+	accessRevoked := httptest.NewRecorder()
+	server.handler.ServeHTTP(
+		accessRevoked,
+		httptest.NewRequest(http.MethodGet, "/api/v1/shares/"+revocable.ID+"/access", http.NoBody),
+	)
+	require.Equal(t, http.StatusNotFound, accessRevoked.Code)
 }
 
 // TestShareHTTPFlow_UnlimitedViews covers a share created without a view limit:
@@ -127,7 +134,49 @@ func TestShareHTTPFlow_RejectsViewsAboveMax(t *testing.T) {
 	require.Contains(t, response.Body.String(), "views must be between 1 and 10")
 }
 
-const testEnvelope = `{"version":1,"algorithm":"AES-GCM","iv":"opaque","ciphertext":"opaque"}`
+func TestShareHTTPFlow_PasswordProtectedShareDoesNotConsumeViewDuringAccessCheck(t *testing.T) {
+	server := newTestServer(t)
+	body, err := json.Marshal(map[string]any{
+		"envelope":           testPasswordEnvelope,
+		"access_envelope":    testAccessEnvelope,
+		"expires_in_seconds": 3600,
+		"views":              1,
+	})
+	require.NoError(t, err)
+	createRequest := httptest.NewRequest(http.MethodPost, "/api/v1/shares", bytes.NewReader(body))
+	createRequest.Header.Set("Content-Type", "application/json")
+	createResponse := httptest.NewRecorder()
+	server.handler.ServeHTTP(createResponse, createRequest)
+	require.Equal(t, http.StatusCreated, createResponse.Code)
+
+	var created testShareResponse
+	require.NoError(t, json.NewDecoder(createResponse.Body).Decode(&created))
+
+	accessResponse := httptest.NewRecorder()
+	server.handler.ServeHTTP(
+		accessResponse,
+		httptest.NewRequest(http.MethodGet, "/api/v1/shares/"+created.ID+"/access", http.NoBody),
+	)
+	require.Equalf(t, http.StatusOK, accessResponse.Code, "access body = %s", accessResponse.Body.String())
+	var access struct {
+		AccessEnvelope string `json:"access_envelope"`
+	}
+	require.NoError(t, json.NewDecoder(accessResponse.Body).Decode(&access))
+	require.JSONEq(t, testAccessEnvelope, access.AccessEnvelope)
+
+	openResponse := httptest.NewRecorder()
+	server.handler.ServeHTTP(
+		openResponse,
+		httptest.NewRequest(http.MethodPost, "/api/v1/shares/"+created.ID+"/open", http.NoBody),
+	)
+	require.Equalf(t, http.StatusOK, openResponse.Code, "open body = %s", openResponse.Body.String())
+	opened := decodeOpenedShare(t, openResponse)
+	require.True(t, opened.Burned)
+}
+
+const testEnvelope = `{"algorithm":"AES-GCM","iv":"opaque","ciphertext":"opaque"}`
+const testPasswordEnvelope = `{"algorithm":"AES-GCM","iv":"opaque","ciphertext":"opaque"}`
+const testAccessEnvelope = `{"algorithm":"AES-GCM","iv":"opaque","ciphertext":"opaque","kdf":"opaque"}`
 
 type testShareResponse struct {
 	ID          string `json:"id"`

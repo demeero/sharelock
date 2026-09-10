@@ -44,7 +44,6 @@ func TestRevokeShare_Exec_ReturnsNotFoundForWrongToken(t *testing.T) {
 	insertShare(t, db, shareRow{
 		ID:              id,
 		EncryptedBlob:   []byte("payload"),
-		CryptoVersion:   1,
 		CreatedAt:       now,
 		ExpiresAt:       now.Add(time.Hour),
 		RevokeTokenHash: hash[:],
@@ -67,7 +66,6 @@ func TestRevokeShare_Exec_DeletesShareWithMatchingToken(t *testing.T) {
 	insertShare(t, db, shareRow{
 		ID:              id,
 		EncryptedBlob:   []byte("payload"),
-		CryptoVersion:   1,
 		CreatedAt:       now,
 		ExpiresAt:       now.Add(time.Hour),
 		RevokeTokenHash: hash[:],

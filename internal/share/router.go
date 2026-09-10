@@ -17,9 +17,10 @@ const maxJSONOverhead = 1 << 20
 
 // createShareReqBody is the browser-visible, encrypted share payload.
 type createShareReqBody struct {
-	Views            *int64 `doc:"Number of allowed opens. Omit to allow opens until expiration." json:"views,omitempty"`
-	Envelope         string `doc:"Opaque, browser-encrypted share envelope."                      json:"envelope"`
-	ExpiresInSeconds int64  `doc:"Lifetime in seconds."                                           json:"expires_in_seconds"`
+	Views            *int64 `doc:"Number of allowed opens. Omit to allow opens until expiration."     json:"views,omitempty"`
+	Envelope         string `doc:"Opaque, browser-encrypted share envelope."                          json:"envelope"`
+	AccessEnvelope   string `doc:"Opaque browser-encrypted password verifier when a password is set." json:"access_envelope,omitempty"`
+	ExpiresInSeconds int64  `doc:"Lifetime in seconds."                                               json:"expires_in_seconds"`
 }
 
 // createShareReq is the input for creating an encrypted share.
@@ -51,6 +52,20 @@ type openShareRespBody struct {
 	Burned    bool   `doc:"Whether this successful read removed the share."         json:"burned"`
 }
 
+// accessShareReq identifies a share whose password-verifier metadata is requested.
+type accessShareReq struct {
+	ID string `doc:"Share identifier from the URL." path:"id"`
+}
+
+// accessShareRespBody contains opaque data for local password verification.
+type accessShareRespBody struct {
+	AccessEnvelope string `doc:"Opaque browser-encrypted password verifier. Empty when no password is set." json:"access_envelope"`
+}
+
+type accessShareResp struct {
+	Body accessShareRespBody
+}
+
 // openShareResp is the response to a successful share read.
 type openShareResp struct {
 	Body openShareRespBody
@@ -64,9 +79,9 @@ type revokeShareReq struct {
 
 // shareSettingsRespBody contains the share limits enforced by the server.
 type shareSettingsRespBody struct {
-	MaxEncryptedBytes uint  `doc:"Maximum encrypted share envelope size in bytes." json:"max_encrypted_bytes"`
-	MaxTTLSeconds     int64 `doc:"Maximum share lifetime in seconds."              json:"max_ttl_seconds"`
-	MaxViews          uint  `doc:"Maximum number of opens a share may allow."      json:"max_views"`
+	MaxEncryptedBytes uint  `doc:"Maximum total size of opaque encrypted share data in bytes." json:"max_encrypted_bytes"`
+	MaxTTLSeconds     int64 `doc:"Maximum share lifetime in seconds."                          json:"max_ttl_seconds"`
+	MaxViews          uint  `doc:"Maximum number of opens a share may allow."                  json:"max_views"`
 }
 
 // shareSettingsResp is the public share settings response.
@@ -76,6 +91,14 @@ type shareSettingsResp struct {
 
 // RegisterRoutes adds Share's HTTP operations to an API group.
 func RegisterRoutes(api huma.API, share *Share, cfg config.ShareConfig) {
+	registerSettingsRoute(api, cfg)
+	registerCreateRoute(api, share, cfg)
+	registerAccessRoute(api, share)
+	registerOpenRoute(api, share)
+	registerRevokeRoute(api, share)
+}
+
+func registerSettingsRoute(api huma.API, cfg config.ShareConfig) {
 	huma.Get(api, "/settings", func(context.Context, *struct{}) (*shareSettingsResp, error) {
 		return &shareSettingsResp{Body: shareSettingsRespBody{
 			MaxEncryptedBytes: cfg.MaxEncryptedBytes,
@@ -86,13 +109,20 @@ func RegisterRoutes(api huma.API, share *Share, cfg config.ShareConfig) {
 		o.OperationID = "getShareSettings"
 		o.Summary = "Get share settings"
 	})
+}
 
+func registerCreateRoute(api huma.API, share *Share, cfg config.ShareConfig) {
 	huma.Post(api, "", func(ctx context.Context, input *createShareReq) (*createShareResp, error) {
+		var accessEnvelope []byte
+		if input.Body.AccessEnvelope != "" {
+			accessEnvelope = []byte(input.Body.AccessEnvelope)
+		}
+
 		created, err := share.Create.Exec(ctx, CreateInput{
-			EncryptedBlob: []byte(input.Body.Envelope),
-			ExpiresIn:     time.Duration(input.Body.ExpiresInSeconds) * time.Second,
-			Views:         input.Body.Views,
-			CryptoVersion: 1,
+			EncryptedBlob:  []byte(input.Body.Envelope),
+			AccessEnvelope: accessEnvelope,
+			ExpiresIn:      time.Duration(input.Body.ExpiresInSeconds) * time.Second,
+			Views:          input.Body.Views,
 		})
 		if errors.Is(err, errbrick.ErrInvalidData) {
 			return nil, huma.NewError(http.StatusBadRequest, err.Error())
@@ -110,7 +140,30 @@ func RegisterRoutes(api huma.API, share *Share, cfg config.ShareConfig) {
 		o.MaxBodyBytes = int64(cfg.MaxEncryptedBytes) + maxJSONOverhead
 		o.Errors = []int{http.StatusBadRequest, http.StatusRequestEntityTooLarge, http.StatusInternalServerError}
 	})
+}
 
+func registerAccessRoute(api huma.API, share *Share) {
+	huma.Get(api, "/{id}/access", func(ctx context.Context, input *accessShareReq) (*accessShareResp, error) {
+		record, err := share.Access.Exec(ctx, input.ID)
+		if errors.Is(err, errbrick.ErrNotFound) {
+			return nil, huma.NewError(http.StatusNotFound, "share is unavailable")
+		}
+		if err != nil {
+			slog.ErrorContext(ctx, "read share access metadata", "error", err)
+			return nil, huma.NewError(http.StatusInternalServerError, "internal error")
+		}
+
+		return &accessShareResp{Body: accessShareRespBody{
+			AccessEnvelope: string(record.AccessEnvelope),
+		}}, nil
+	}, func(o *huma.Operation) {
+		o.OperationID = "getShareAccess"
+		o.Summary = "Get password-verifier metadata without opening a share"
+		o.Errors = []int{http.StatusNotFound, http.StatusInternalServerError}
+	})
+}
+
+func registerOpenRoute(api huma.API, share *Share) {
 	huma.Post(api, "/{id}/open", func(ctx context.Context, input *openShareReq) (*openShareResp, error) {
 		record, err := share.Open.Exec(ctx, input.ID)
 		if errors.Is(err, errbrick.ErrNotFound) {
@@ -131,7 +184,9 @@ func RegisterRoutes(api huma.API, share *Share, cfg config.ShareConfig) {
 		o.Summary = "Retrieve an encrypted share"
 		o.Errors = []int{http.StatusNotFound, http.StatusInternalServerError}
 	})
+}
 
+func registerRevokeRoute(api huma.API, share *Share) {
 	huma.Delete(api, "/{id}", func(ctx context.Context, input *revokeShareReq) (*struct{}, error) {
 		if input.RevokeToken == "" {
 			return nil, huma.NewError(http.StatusNotFound, "share is unavailable")

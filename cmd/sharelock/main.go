@@ -17,13 +17,13 @@ import (
 func main() {
 	cfg, err := config.Load()
 	if err != nil {
-		slog.Error("invalid configuration", "error", err)
+		slog.Error("invalid config", "error", err)
 		os.Exit(1)
 	}
 
 	logbrick.Configure(cfg.Log.Level, cfg.Log.AddSource)
 
-	slog.Info("configuration loaded")
+	slog.Info("config loaded")
 
 	startupCtx, cancelStartup := context.WithTimeout(context.Background(), cfg.DB.StartupTimeout)
 	defer cancelStartup()
@@ -53,6 +53,7 @@ func main() {
 
 	go shareService.Vacuum.Exec(ctx, cfg.Share.VacuumInterval)
 
+	slog.Info("starting HTTP srv", "addr", cfg.HTTP.Addr)
 	if err := server.ListenAndServe(ctx); err != nil {
 		slog.Error("server stopped", "err", err)
 		os.Exit(1)

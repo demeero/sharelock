@@ -10,7 +10,7 @@ import (
 )
 
 // currentSchemaVersion is the highest embedded migration number.
-const currentSchemaVersion = 2
+const currentSchemaVersion = 3
 
 func TestMigrateCreatesCurrentSchemaAndIsIdempotent(t *testing.T) {
 	t.Parallel()
@@ -39,6 +39,8 @@ func TestMigrateCreatesCurrentSchemaAndIsIdempotent(t *testing.T) {
 	}
 
 	assertColumnExists(t, db, "shares", "views_left")
+	assertColumnExists(t, db, "shares", "access_envelope")
+	assertColumnAbsent(t, db, "shares", "crypto_version")
 }
 
 // TestMigrateReplacesBurnAfterOpenWithViews pins the data mapping of migration
@@ -102,6 +104,14 @@ func TestMigrateReplacesBurnAfterOpenWithViews(t *testing.T) {
 		}
 	}
 
+	var accessEnvelope []byte
+	if err := db.QueryRow(`SELECT access_envelope FROM shares WHERE id = ?`, burnID).Scan(&accessEnvelope); err != nil {
+		t.Fatalf("read preserved access envelope: %v", err)
+	}
+	if accessEnvelope != nil {
+		t.Fatalf("legacy share access_envelope = %q, want NULL", accessEnvelope)
+	}
+
 	// The rebuild drops the table, so the expiry index must have been recreated.
 	var index string
 	if err := db.QueryRow(`
@@ -140,6 +150,45 @@ func TestMigrateAdoptsExistingShareSchema(t *testing.T) {
 	assertTableExists(t, db, "schema_migrations")
 }
 
+func TestMigrateDoesNotDiscardPasswordProtectedSharesOnDown(t *testing.T) {
+	t.Parallel()
+	db, err := openTestDB(t)
+	if err != nil {
+		t.Fatalf("open test database: %v", err)
+	}
+	defer db.Close()
+
+	migrator, err := newMigrator(db)
+	if err != nil {
+		t.Fatalf("new migrator: %v", err)
+	}
+	if err := migrator.Steps(3); err != nil {
+		t.Fatalf("apply migrations: %v", err)
+	}
+
+	id := bytes.Repeat([]byte{0x01}, 32)
+	if _, err := db.Exec(`
+		INSERT INTO shares (
+			id, encrypted_blob, access_envelope, created_at, expires_at,
+			views_left, revoke_token_hash, size_bytes
+		) VALUES (?, ?, ?, 1000, 2000, NULL, ?, 15)`,
+		id, []byte("payload"), []byte("verifier"), bytes.Repeat([]byte{0x03}, 32)); err != nil {
+		t.Fatalf("insert password-protected share: %v", err)
+	}
+
+	if err := migrator.Steps(-1); err == nil {
+		t.Fatal("downgrade unexpectedly succeeded with a password-protected share")
+	}
+
+	var accessEnvelope []byte
+	if err := db.QueryRow(`SELECT access_envelope FROM shares WHERE id = ?`, id).Scan(&accessEnvelope); err != nil {
+		t.Fatalf("read password-protected share after failed downgrade: %v", err)
+	}
+	if !bytes.Equal(accessEnvelope, []byte("verifier")) {
+		t.Fatalf("password-protected share changed by failed downgrade: verifier=%q", accessEnvelope)
+	}
+}
+
 func openTestDB(t *testing.T) (*sql.DB, error) {
 	t.Helper()
 
@@ -155,6 +204,19 @@ func assertColumnExists(t *testing.T, db *sql.DB, table, column string) {
 	}
 	if count != 1 {
 		t.Fatalf("column %s.%s not found", table, column)
+	}
+}
+
+func assertColumnAbsent(t *testing.T, db *sql.DB, table, column string) {
+	t.Helper()
+	var count int
+	if err := db.QueryRow(
+		`SELECT COUNT(*) FROM pragma_table_info(?) WHERE name = ?`, table, column,
+	).Scan(&count); err != nil {
+		t.Fatalf("inspect %s.%s: %v", table, column, err)
+	}
+	if count != 0 {
+		t.Fatalf("column %s.%s unexpectedly exists", table, column)
 	}
 }
 

@@ -14,10 +14,10 @@ import (
 // CreateInput is the server-visible part of a newly created share.
 // A nil Views means the share stays readable until it expires.
 type CreateInput struct {
-	Views         *int64
-	EncryptedBlob []byte
-	ExpiresIn     time.Duration
-	CryptoVersion int
+	Views          *int64
+	EncryptedBlob  []byte
+	AccessEnvelope []byte
+	ExpiresIn      time.Duration
 }
 
 // CreatedShare is returned once a share was committed. The revoke token is a
@@ -33,8 +33,8 @@ type createDBInput struct {
 	ViewsLeft       *int64
 	ID              []byte
 	EncryptedBlob   []byte
+	AccessEnvelope  []byte
 	RevokeTokenHash []byte
-	CryptoVersion   int
 }
 
 type CreateShare struct {
@@ -57,17 +57,8 @@ func NewCreateShare(db *sql.DB, maxEncryptedBytes, identifierSize, maxViews uint
 
 // Exec validates and stores an opaque encrypted share.
 func (c *CreateShare) Exec(ctx context.Context, input CreateInput) (CreatedShare, error) {
-	if len(input.EncryptedBlob) == 0 || len(input.EncryptedBlob) > int(c.maxEncryptedBytes) {
-		return CreatedShare{}, fmt.Errorf("%w: encrypted payload size must be between 1 and %d bytes", errbrick.ErrInvalidData, c.maxEncryptedBytes)
-	}
-	if input.ExpiresIn <= 0 || input.ExpiresIn > c.maxTTL {
-		return CreatedShare{}, fmt.Errorf("%w: expiration must be between 1 and %.0f seconds", errbrick.ErrInvalidData, c.maxTTL.Seconds())
-	}
-	if input.Views != nil && (*input.Views < 1 || *input.Views > int64(c.maxViews)) {
-		return CreatedShare{}, fmt.Errorf("%w: views must be between 1 and %d", errbrick.ErrInvalidData, c.maxViews)
-	}
-	if input.CryptoVersion != 1 {
-		return CreatedShare{}, fmt.Errorf("%w: crypto version", errbrick.ErrInvalidData)
+	if err := c.validate(input); err != nil {
+		return CreatedShare{}, err
 	}
 
 	id := make([]byte, c.identifierSize)
@@ -85,7 +76,7 @@ func (c *CreateShare) Exec(ctx context.Context, input CreateInput) (CreatedShare
 	dbInput := createDBInput{
 		ID:              id,
 		EncryptedBlob:   input.EncryptedBlob,
-		CryptoVersion:   input.CryptoVersion,
+		AccessEnvelope:  input.AccessEnvelope,
 		CreatedAt:       now,
 		ExpiresAt:       now.Add(input.ExpiresIn),
 		ViewsLeft:       input.Views,
@@ -101,20 +92,35 @@ func (c *CreateShare) Exec(ctx context.Context, input CreateInput) (CreatedShare
 	}, nil
 }
 
+func (c *CreateShare) validate(input CreateInput) error {
+	encryptedBytes := len(input.EncryptedBlob) + len(input.AccessEnvelope)
+	if len(input.EncryptedBlob) == 0 || encryptedBytes > int(c.maxEncryptedBytes) {
+		return fmt.Errorf("%w: encrypted payload size must be between 1 and %d bytes", errbrick.ErrInvalidData, c.maxEncryptedBytes)
+	}
+	if input.ExpiresIn <= 0 || input.ExpiresIn > c.maxTTL {
+		return fmt.Errorf("%w: expiration must be between 1 and %.0f seconds", errbrick.ErrInvalidData, c.maxTTL.Seconds())
+	}
+	if input.Views != nil && (*input.Views < 1 || *input.Views > int64(c.maxViews)) {
+		return fmt.Errorf("%w: views must be between 1 and %d", errbrick.ErrInvalidData, c.maxViews)
+	}
+
+	return nil
+}
+
 func (c *CreateShare) insert(ctx context.Context, input createDBInput) error {
 	_, err := c.db.ExecContext(ctx, `
 		INSERT INTO shares (
-			id, encrypted_blob, crypto_version, created_at, expires_at,
+			id, encrypted_blob, access_envelope, created_at, expires_at,
 			views_left, revoke_token_hash, size_bytes
 		) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
 		input.ID,
 		input.EncryptedBlob,
-		input.CryptoVersion,
+		input.AccessEnvelope,
 		input.CreatedAt.Unix(),
 		input.ExpiresAt.Unix(),
 		input.ViewsLeft,
 		input.RevokeTokenHash,
-		len(input.EncryptedBlob),
+		len(input.EncryptedBlob)+len(input.AccessEnvelope),
 	)
 
 	return err

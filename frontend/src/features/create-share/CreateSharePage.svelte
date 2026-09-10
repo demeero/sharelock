@@ -4,7 +4,7 @@
   import { apiClient, apiError } from "../../shared/api/client";
   import { bytesToBase64URL } from "../../shared/crypto/base64url";
   import {
-    encryptedEnvelopeByteLength,
+    encryptedShareByteLength,
     encryptItems,
     type EncryptedItem,
   } from "../../shared/crypto/share-crypto";
@@ -28,9 +28,15 @@
   let expiresInSeconds = $state("");
   let limitOpens = $state(false);
   let allowedOpens = $state<number | undefined>(1);
+  let passwordProtected = $state(false);
+  let password = $state("");
+  let passwordConfirmation = $state("");
+  let passwordsVisible = $state(false);
   let busy = $state(false);
   let error = $state("");
-  let created = $state<{ revokeURL: string; shareURL: string } | null>(null);
+  let created = $state<{ passwordProtected: boolean; revokeURL: string; shareURL: string } | null>(
+    null,
+  );
   let settings = $state<{
     max_encrypted_bytes: number;
     max_ttl_seconds: number;
@@ -144,23 +150,34 @@
         throw new Error(`Choose between 1 and ${settings.max_views} opens.`);
       }
 
-      const expectedEnvelopeBytes = encryptedEnvelopeByteLength(encryptedItems);
+      if (passwordProtected && password.length === 0) {
+        throw new Error("Enter a password to protect this share.");
+      }
+      if (passwordProtected && password !== passwordConfirmation) {
+        throw new Error("The password confirmation does not match.");
+      }
+
+      const sharePassword = passwordProtected ? password : undefined;
+      const expectedEnvelopeBytes = encryptedShareByteLength(encryptedItems, sharePassword);
       if (expectedEnvelopeBytes > settings.max_encrypted_bytes) {
         throw new Error(
           `The encrypted share would be ${formatBytes(expectedEnvelopeBytes)}. The server limit is ${formatBytes(settings.max_encrypted_bytes)}.`,
         );
       }
 
-      const { envelope, key } = await encryptItems(encryptedItems);
-      const envelopeBytes = new TextEncoder().encode(envelope).byteLength;
-      if (envelopeBytes > settings.max_encrypted_bytes) {
+      const encryptedShare = await encryptItems(encryptedItems, sharePassword);
+      const encryptedBytes =
+        new TextEncoder().encode(encryptedShare.envelope).byteLength +
+        new TextEncoder().encode(encryptedShare.accessEnvelope ?? "").byteLength;
+      if (encryptedBytes > settings.max_encrypted_bytes) {
         throw new Error(
-          `The encrypted share is ${formatBytes(envelopeBytes)}. The server limit is ${formatBytes(settings.max_encrypted_bytes)}.`,
+          `The encrypted share is ${formatBytes(encryptedBytes)}. The server limit is ${formatBytes(settings.max_encrypted_bytes)}.`,
         );
       }
       const { data, error: responseError } = await apiClient.POST("/api/v1/shares", {
         body: {
-          envelope,
+          envelope: encryptedShare.envelope,
+          access_envelope: encryptedShare.accessEnvelope,
           expires_in_seconds: Number(expiresInSeconds),
           views: limitOpens ? allowedOpens : undefined,
         },
@@ -170,9 +187,12 @@
       }
       const baseURL = `${window.location.origin}/s/${data.id}`;
       created = {
-        shareURL: `${baseURL}#k=${bytesToBase64URL(key)}`,
+        passwordProtected,
+        shareURL: `${baseURL}#k=${bytesToBase64URL(encryptedShare.key)}`,
         revokeURL: `${baseURL}#revoke=${data.revoke_token}`,
       };
+      password = "";
+      passwordConfirmation = "";
     } catch (caught) {
       error = caught instanceof Error ? caught.message : "Could not create the share.";
     } finally {
@@ -263,6 +283,14 @@
         </div>
 
         <CopyField label="Share URL" value={created.shareURL} />
+
+        {#if created.passwordProtected}
+          <Notice
+            status="PASSWORD REQUIRED"
+            tone="yellow"
+            message="The recipient must enter the password you chose. Send it through a separate trusted channel; it is not part of this URL."
+          />
+        {/if}
 
         <section box-="square" shear-="top" is-="column" gap-="1">
           <div is-="row" wrap- align-="center between" gap-="1">
@@ -407,6 +435,53 @@
                       >The share is deleted from the server on its last allowed open.</mark
                     >
                   </p>
+                {/if}
+
+                <label>
+                  <input
+                    is-="switch"
+                    type="checkbox"
+                    bind:checked={passwordProtected}
+                    disabled={busy}
+                  />
+                  Protect with a separate password
+                </label>
+                {#if passwordProtected}
+                  <div is-="column" gap-="1">
+                    <label is-="column" gap-="1">
+                      <span>Password</span>
+                      <input
+                        type={passwordsVisible ? "text" : "password"}
+                        autocomplete="new-password"
+                        bind:value={password}
+                        disabled={busy}
+                      />
+                    </label>
+                    <label is-="column" gap-="1">
+                      <span>Confirm password</span>
+                      <input
+                        type={passwordsVisible ? "text" : "password"}
+                        autocomplete="new-password"
+                        bind:value={passwordConfirmation}
+                        disabled={busy}
+                      />
+                    </label>
+                    <div is-="row" wrap- align-="center start" gap-="1">
+                      <button
+                        box-="round"
+                        type="button"
+                        onclick={() => (passwordsVisible = !passwordsVisible)}
+                        disabled={busy}
+                        >{passwordsVisible ? "Hide passwords" : "Show passwords"}</button
+                      >
+                    </div>
+                    <p>
+                      <mark fg-="foreground2"
+                        >The password is used only in this browser and is never included in the
+                        share URL or upload.</mark
+                      >
+                    </p>
+                  </div>
                 {/if}
               </div>
             </section>

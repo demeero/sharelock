@@ -20,7 +20,6 @@ type OpenedShare struct {
 	ViewsLeft     *int64
 	ID            []byte
 	EncryptedBlob []byte
-	CryptoVersion int
 }
 
 type OpenShare struct {
@@ -89,9 +88,8 @@ func claimView(ctx context.Context, tx *sql.Tx, id []byte, now time.Time) (Opene
 		WHERE id = ?
 		  AND expires_at > ?
 		  AND (views_left IS NULL OR views_left > 0)
-		RETURNING encrypted_blob, crypto_version, created_at, expires_at, views_left`, id, now.Unix()).Scan(
+		RETURNING encrypted_blob, created_at, expires_at, views_left`, id, now.Unix()).Scan(
 		&record.EncryptedBlob,
-		&record.CryptoVersion,
 		&createdAt,
 		&expiresAt,
 		&record.ViewsLeft,

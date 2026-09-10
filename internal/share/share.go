@@ -10,6 +10,7 @@ import (
 
 type Share struct {
 	Create *CreateShare
+	Access *AccessShare
 	Open   *OpenShare
 	Revoke *RevokeShare
 	Vacuum *Vacuum
@@ -17,12 +18,14 @@ type Share struct {
 
 func New(cfg config.ShareConfig, api huma.API, db *sql.DB) *Share {
 	createShare := NewCreateShare(db, cfg.MaxEncryptedBytes, cfg.IdentifierSize, cfg.MaxViews, cfg.MaxTTL)
+	accessShare := NewAccessShare(db, cfg.IdentifierSize)
 	openShare := NewOpenShare(db, cfg.IdentifierSize)
 	revokeShare := NewRevokeShare(db, cfg.IdentifierSize)
 	vacuumShare := NewVacuum(db)
 
 	share := &Share{
 		Create: createShare,
+		Access: accessShare,
 		Open:   openShare,
 		Revoke: revokeShare,
 		Vacuum: vacuumShare,

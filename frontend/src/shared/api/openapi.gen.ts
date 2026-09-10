@@ -55,6 +55,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/shares/{id}/access": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get password-verifier metadata without opening a share */
+        get: operations["getShareAccess"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/shares/{id}/open": {
         parameters: {
             query?: never;
@@ -76,6 +93,16 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        AccessShareRespBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/AccessShareRespBody.json
+             */
+            readonly $schema?: string;
+            /** @description Opaque browser-encrypted password verifier. Empty when no password is set. */
+            access_envelope: string;
+        };
         CreateShareReqBody: {
             /**
              * Format: uri
@@ -83,6 +110,8 @@ export interface components {
              * @example https://example.com/schemas/CreateShareReqBody.json
              */
             readonly $schema?: string;
+            /** @description Opaque browser-encrypted password verifier when a password is set. */
+            access_envelope?: string;
             /** @description Opaque, browser-encrypted share envelope. */
             envelope: string;
             /**
@@ -189,7 +218,7 @@ export interface components {
             readonly $schema?: string;
             /**
              * Format: int64
-             * @description Maximum encrypted share envelope size in bytes.
+             * @description Maximum total size of opaque encrypted share data in bytes.
              */
             max_encrypted_bytes: number;
             /**
@@ -322,6 +351,56 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    getShareAccess: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Share identifier from the URL. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AccessShareRespBody"];
+                };
             };
             /** @description Not Found */
             404: {

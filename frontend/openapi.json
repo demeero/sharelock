@@ -1,6 +1,28 @@
 {
   "components": {
     "schemas": {
+      "AccessShareRespBody": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/schemas/AccessShareRespBody.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "access_envelope": {
+            "description": "Opaque browser-encrypted password verifier. Empty when no password is set.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "access_envelope"
+        ],
+        "type": "object"
+      },
       "CreateShareReqBody": {
         "additionalProperties": false,
         "properties": {
@@ -11,6 +33,10 @@
             ],
             "format": "uri",
             "readOnly": true,
+            "type": "string"
+          },
+          "access_envelope": {
+            "description": "Opaque browser-encrypted password verifier when a password is set.",
             "type": "string"
           },
           "envelope": {
@@ -206,7 +232,7 @@
             "type": "string"
           },
           "max_encrypted_bytes": {
-            "description": "Maximum encrypted share envelope size in bytes.",
+            "description": "Maximum total size of opaque encrypted share data in bytes.",
             "format": "int64",
             "minimum": 0,
             "type": "integer"
@@ -394,6 +420,66 @@
           }
         },
         "summary": "Revoke an encrypted share"
+      }
+    },
+    "/api/v1/shares/{id}/access": {
+      "get": {
+        "operationId": "getShareAccess",
+        "parameters": [
+          {
+            "description": "Share identifier from the URL.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "description": "Share identifier from the URL.",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccessShareRespBody"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "summary": "Get password-verifier metadata without opening a share"
       }
     },
     "/api/v1/shares/{id}/open": {

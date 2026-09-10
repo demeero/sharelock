@@ -24,27 +24,31 @@ func TestCreateShare_Exec_RejectsInvalidInput(t *testing.T) {
 		maxEncryptedBytes uint
 	}{
 		"empty encrypted blob": {
-			input:             CreateInput{EncryptedBlob: nil, ExpiresIn: time.Minute, CryptoVersion: 1},
+			input:             CreateInput{EncryptedBlob: nil, ExpiresIn: time.Minute},
 			maxEncryptedBytes: 1024,
 		},
 		"encrypted blob exceeding max": {
-			input:             CreateInput{EncryptedBlob: []byte("too big"), ExpiresIn: time.Minute, CryptoVersion: 1},
+			input:             CreateInput{EncryptedBlob: []byte("too big"), ExpiresIn: time.Minute},
 			maxEncryptedBytes: 4,
 		},
 		"non-positive expires in": {
-			input:             CreateInput{EncryptedBlob: []byte("payload"), ExpiresIn: 0, CryptoVersion: 1},
+			input:             CreateInput{EncryptedBlob: []byte("payload"), ExpiresIn: 0},
 			maxEncryptedBytes: 1024,
 		},
 		"expires in exceeding max TTL": {
-			input:             CreateInput{EncryptedBlob: []byte("payload"), ExpiresIn: 2 * time.Hour, CryptoVersion: 1},
+			input:             CreateInput{EncryptedBlob: []byte("payload"), ExpiresIn: 2 * time.Hour},
 			maxEncryptedBytes: 1024,
 		},
-		"unsupported crypto version": {
-			input:             CreateInput{EncryptedBlob: []byte("payload"), ExpiresIn: time.Minute, CryptoVersion: 2},
-			maxEncryptedBytes: 1024,
+		"encrypted blobs exceeding combined limit": {
+			input: CreateInput{
+				EncryptedBlob:  []byte("payload"),
+				AccessEnvelope: []byte("verifier"),
+				ExpiresIn:      time.Minute,
+			},
+			maxEncryptedBytes: 8,
 		},
 		"non-positive views": {
-			input:             CreateInput{EncryptedBlob: []byte("payload"), ExpiresIn: time.Minute, Views: new(int64(0)), CryptoVersion: 1},
+			input:             CreateInput{EncryptedBlob: []byte("payload"), ExpiresIn: time.Minute, Views: new(int64(0))},
 			maxEncryptedBytes: 1024,
 		},
 		"views exceeding max views": {
@@ -52,7 +56,6 @@ func TestCreateShare_Exec_RejectsInvalidInput(t *testing.T) {
 				EncryptedBlob: []byte("payload"),
 				ExpiresIn:     time.Minute,
 				Views:         new(int64(testMaxViews + 1)),
-				CryptoVersion: 1,
 			},
 			maxEncryptedBytes: 1024,
 		},
@@ -79,7 +82,6 @@ func TestCreateShare_Exec_StoresShare(t *testing.T) {
 		EncryptedBlob: []byte("payload"),
 		ExpiresIn:     time.Minute,
 		Views:         new(int64(3)),
-		CryptoVersion: 1,
 	})
 	require.NoError(t, err)
 
@@ -91,20 +93,18 @@ func TestCreateShare_Exec_StoresShare(t *testing.T) {
 	var (
 		encryptedBlob   []byte
 		revokeTokenHash []byte
-		cryptoVersion   int
 		createdAt       int64
 		expiresAt       int64
 		remainingViews  *int64
 		sizeBytes       int
 	)
 	require.NoError(t, db.QueryRow(`
-		SELECT encrypted_blob, crypto_version, created_at, expires_at, views_left, revoke_token_hash, size_bytes
+		SELECT encrypted_blob, created_at, expires_at, views_left, revoke_token_hash, size_bytes
 		FROM shares WHERE id = ?`, id).Scan(
-		&encryptedBlob, &cryptoVersion, &createdAt, &expiresAt, &remainingViews, &revokeTokenHash, &sizeBytes,
+		&encryptedBlob, &createdAt, &expiresAt, &remainingViews, &revokeTokenHash, &sizeBytes,
 	))
 
 	assert.Equal(t, []byte("payload"), encryptedBlob)
-	assert.Equal(t, 1, cryptoVersion)
 	assert.Equal(t, new(int64(3)), remainingViews)
 	assert.Equal(t, len("payload"), sizeBytes)
 	assert.GreaterOrEqual(t, createdAt, before.Unix())
@@ -120,7 +120,6 @@ func TestCreateShare_Exec_StoresUnlimitedShareWithoutViews(t *testing.T) {
 	created, err := c.Exec(t.Context(), CreateInput{
 		EncryptedBlob: []byte("payload"),
 		ExpiresIn:     time.Minute,
-		CryptoVersion: 1,
 	})
 	require.NoError(t, err)
 
@@ -130,4 +129,29 @@ func TestCreateShare_Exec_StoresUnlimitedShareWithoutViews(t *testing.T) {
 	remaining, found := viewsLeft(t, db, id)
 	require.True(t, found)
 	assert.Nil(t, remaining)
+}
+
+func TestCreateShare_Exec_StoresPasswordProtectedShare(t *testing.T) {
+	db := newTestDB(t)
+	c := NewCreateShare(db, 1024, testIdentifierSize, testMaxViews, time.Hour)
+
+	created, err := c.Exec(t.Context(), CreateInput{
+		EncryptedBlob:  []byte("payload"),
+		AccessEnvelope: []byte("verifier"),
+		ExpiresIn:      time.Minute,
+	})
+	require.NoError(t, err)
+
+	id, err := Decode(created.ID, testIdentifierSize)
+	require.NoError(t, err)
+
+	var (
+		accessEnvelope []byte
+		sizeBytes      int
+	)
+	require.NoError(t, db.QueryRow(`
+		SELECT access_envelope, size_bytes FROM shares WHERE id = ?`, id,
+	).Scan(&accessEnvelope, &sizeBytes))
+	assert.Equal(t, []byte("verifier"), accessEnvelope)
+	assert.Equal(t, len("payload")+len("verifier"), sizeBytes)
 }

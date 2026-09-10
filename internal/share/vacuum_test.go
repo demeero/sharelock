@@ -20,7 +20,6 @@ func TestVacuum_Exec_DeletesExpiredShares(t *testing.T) {
 		insertShare(t, db, shareRow{
 			ID:              expiredID,
 			EncryptedBlob:   []byte("payload"),
-			CryptoVersion:   1,
 			CreatedAt:       now.Add(-2 * time.Hour),
 			ExpiresAt:       now.Add(-time.Hour),
 			RevokeTokenHash: make([]byte, sha256Size),
@@ -28,7 +27,6 @@ func TestVacuum_Exec_DeletesExpiredShares(t *testing.T) {
 		insertShare(t, db, shareRow{
 			ID:              liveID,
 			EncryptedBlob:   []byte("payload"),
-			CryptoVersion:   1,
 			CreatedAt:       now,
 			ExpiresAt:       now.Add(time.Hour),
 			RevokeTokenHash: make([]byte, sha256Size),

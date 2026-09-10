@@ -92,6 +92,13 @@ tasks:
     cmds:
       - npm run check
 
+  ui:test:
+    desc: Run frontend unit tests
+    dir: ./frontend
+    deps: [ui:install]
+    cmds:
+      - npm run test
+
 # =========================================
 
 # =================Backend=================

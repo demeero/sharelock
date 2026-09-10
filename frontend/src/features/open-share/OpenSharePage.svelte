@@ -1,6 +1,11 @@
 <script lang="ts">
   import { apiClient, apiError } from "../../shared/api/client";
-  import { decryptItems, type EncryptedItem } from "../../shared/crypto/share-crypto";
+  import {
+    decryptItems,
+    decryptPasswordProtectedItems,
+    verifyPassword,
+    type EncryptedItem,
+  } from "../../shared/crypto/share-crypto";
   import AppShell from "../../shared/ui/AppShell.svelte";
   import Icon from "../../shared/ui/Icon.svelte";
   import Notice from "../../shared/ui/Notice.svelte";
@@ -20,6 +25,9 @@
   let busy = $state(false);
   let error = $state("");
   let errorStatus = $state("UNAVAILABLE");
+  let passwordAccess = $state<string | null>(null);
+  let password = $state("");
+  let passwordVisible = $state(false);
   let revoked = $state(false);
   let revokeDialog = $state<HTMLDialogElement>();
 
@@ -37,27 +45,76 @@
         throw new Error("This URL does not contain a decryption key.");
       }
 
-      const { data, error: responseError } = await apiClient.POST("/api/v1/shares/{id}/open", {
-        params: { path: { id: shareID } },
-      });
-      if (!data) {
+      const { data: accessData, error: responseError } = await apiClient.GET(
+        "/api/v1/shares/{id}/access",
+        { params: { path: { id: shareID } } },
+      );
+      if (!accessData) {
         errorStatus = "UNAVAILABLE";
         throw apiError(responseError, "This share is unavailable, expired, burned, or revoked.");
       }
-
-      try {
-        items = await decryptItems(data.envelope, key);
-      } catch {
-        errorStatus = "INVALID KEY";
-        throw new Error("The decryption key is invalid or the encrypted payload is damaged.");
+      if (accessData.access_envelope) {
+        passwordAccess = accessData.access_envelope;
+        return;
       }
-      burned = data.burned;
-      viewsLeft = data.views_left;
+
+      await claimAndDecrypt(key);
     } catch (caught) {
       error = caught instanceof Error ? caught.message : "Could not decrypt this share.";
     } finally {
       busy = false;
     }
+  }
+
+  async function openPasswordProtectedShare(): Promise<void> {
+    if (busy || !passwordAccess) {
+      return;
+    }
+
+    error = "";
+    busy = true;
+    try {
+      const key = fragment.get("k");
+      if (!key) {
+        errorStatus = "INVALID KEY";
+        throw new Error("This URL does not contain a decryption key.");
+      }
+
+      let cryptoKey: CryptoKey;
+      try {
+        cryptoKey = await verifyPassword(passwordAccess, key, password);
+      } catch {
+        errorStatus = "PASSWORD INVALID";
+        throw new Error("The password is incorrect or the password verifier is damaged.");
+      }
+      await claimAndDecrypt(key, cryptoKey);
+      password = "";
+    } catch (caught) {
+      error = caught instanceof Error ? caught.message : "Could not decrypt this share.";
+    } finally {
+      busy = false;
+    }
+  }
+
+  async function claimAndDecrypt(key: string, passwordKey?: CryptoKey): Promise<void> {
+    const { data, error: responseError } = await apiClient.POST("/api/v1/shares/{id}/open", {
+      params: { path: { id: shareID } },
+    });
+    if (!data) {
+      errorStatus = "UNAVAILABLE";
+      throw apiError(responseError, "This share is unavailable, expired, burned, or revoked.");
+    }
+    try {
+      items =
+        passwordKey === undefined
+          ? await decryptItems(data.envelope, key)
+          : await decryptPasswordProtectedItems(data.envelope, passwordKey);
+    } catch {
+      errorStatus = "INVALID KEY";
+      throw new Error("The decryption key is invalid or the encrypted payload is damaged.");
+    }
+    burned = data.burned;
+    viewsLeft = data.views_left;
   }
 
   function requestRevoke(): void {
@@ -228,19 +285,59 @@
         {#if error}
           <Notice status={errorStatus} message={error} recoveryHref="/" />
         {/if}
-        <div is-="row" wrap- align-="center end" gap-="1">
-          <button
-            box-="round"
-            variant-="mauve"
-            type="button"
-            onclick={() => void open()}
-            disabled={busy}
+        {#if passwordAccess}
+          <form
+            is-="column"
+            gap-="1"
+            onsubmit={(event) => {
+              event.preventDefault();
+              void openPasswordProtectedShare();
+            }}
           >
-            {#if busy}<span is-="spinner" variant-="dots" aria-hidden="true"></span> Decrypting…{:else}<Icon
-                name="key"
-              /> Open & decrypt{/if}
-          </button>
-        </div>
+            <p>
+              <mark fg-="foreground2"
+                >This share also requires a password. It is verified locally before an open is
+                counted.</mark
+              >
+            </p>
+            <label is-="column" gap-="1">
+              <span>Password</span>
+              <input
+                type={passwordVisible ? "text" : "password"}
+                autocomplete="current-password"
+                bind:value={password}
+                disabled={busy}
+              />
+            </label>
+            <div is-="row" wrap- align-="center between" gap-="1">
+              <button
+                box-="round"
+                type="button"
+                onclick={() => (passwordVisible = !passwordVisible)}
+                disabled={busy}>{passwordVisible ? "Hide password" : "Show password"}</button
+              >
+              <button box-="round" variant-="mauve" type="submit" disabled={busy}>
+                {#if busy}<span is-="spinner" variant-="dots" aria-hidden="true"></span> Verifying…{:else}<Icon
+                    name="key"
+                  /> Verify & open{/if}
+              </button>
+            </div>
+          </form>
+        {:else}
+          <div is-="row" wrap- align-="center end" gap-="1">
+            <button
+              box-="round"
+              variant-="mauve"
+              type="button"
+              onclick={() => void open()}
+              disabled={busy}
+            >
+              {#if busy}<span is-="spinner" variant-="dots" aria-hidden="true"></span> Preparing…{:else}<Icon
+                  name="key"
+                /> Open & decrypt{/if}
+            </button>
+          </div>
+        {/if}
       </div>
     </section>
   {/if}

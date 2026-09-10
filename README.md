@@ -10,6 +10,7 @@ The browser encrypts every item before upload. The SQLite database stores only a
 
 - a single Go binary and an embedded SQLite database;
 - browser-side AES-256-GCM encryption using the Web Crypto API;
+- optional browser-side password protection, shared separately from the URL;
 - multiple text or file items in one share;
 - fixed expiration and an optional limit on how many times a share may be opened;
 - a separate revoke capability returned only at creation time;
@@ -170,14 +171,13 @@ Sharelock reads its runtime configuration from environment variables.
 | `HTTP_DISABLE_API_DOCS`     | Disable the `/openapi.json` and `/docs` (Swagger UI) endpoints.                                      | `false`               |
 | `TLS_CERT_FILE`             | Path to the TLS certificate PEM file. Must be set together with `TLS_CERT_KEY_FILE`.                 | Disabled              |
 | `TLS_CERT_KEY_FILE`         | Path to the TLS private-key PEM file. Must be set together with `TLS_CERT_FILE`.                     | Disabled              |
-| `SHARE_MAX_ENCRYPTED_BYTES` | Maximum ciphertext bundle size accepted when creating a share.                                       | `10485760` (10 MiB)   |
+| `SHARE_MAX_ENCRYPTED_BYTES` | Maximum total encrypted share data accepted when creating a share, including a password verifier.    | `10485760` (10 MiB)   |
 | `SHARE_MAX_TTL`             | Maximum lifetime that may be requested for a share.                                                  | `720h` (30 days)      |
 | `SHARE_MAX_VIEWS`           | Maximum number of opens that may be requested for a share.                                           | `100`                 |
 | `SHARE_VACUUM_INTERVAL`     | Interval for removing expired or consumed shares.                                                    | `1h`                  |
 | `SHARE_IDENTIFIER_SIZE`     | Number of random bytes in each share and revoke identifier before URL-safe Base64 encoding.          | `32`                  |
 | `LOG_LEVEL`                 | Minimum structured log level. Invalid values fall back to `info`.                                    | `info`                |
 | `LOG_ADD_SOURCE`            | Include source file and line information in structured logs.                                         | `false`               |
-| `SHUTDOWN_TIMEOUT`          | Service shutdown timeout.                                                                            | `15s`                 |
 
 Durations use the [Go duration format](https://pkg.go.dev/time#ParseDuration), such as `5s`, `1m`, or `24h`. All connection limits, share limits, identifier sizes, and durations must be positive. Built-in TLS is enabled only when both TLS file variables are non-empty.
 
@@ -238,6 +238,10 @@ docker run -d \
 ## Security boundary
 
 The service protects a stolen SQLite file from revealing content, because it contains ciphertext only. It does **not** protect against a malicious or compromised live server serving altered JavaScript; Use HTTPS, keep all static assets local, and share the URL only through a trusted channel.
+
+### Password-protected shares
+
+A password-protected share requires two browser-local factors: the random key after `#` in the URL and a separately supplied password. The browser derives the decryption key from both, encrypts a small password verifier alongside the payload, and sends only opaque ciphertext to Sharelock. On opening, the browser validates the verifier locally before requesting the payload, so an incorrect password never consumes a limited open. The password is never sent to Sharelock, stored in SQLite, or included in the URL; share it through a separate trusted channel.
 
 A share may carry an open limit. Each successful read claims one open, and the record is deleted on the last one; a share created without a limit stays readable until it expires. Claiming an open is a single atomic statement, so concurrent readers can never consume more opens than the share was created with.
 

@@ -50,8 +50,8 @@ type shareRow struct {
 	ViewsLeft       *int64
 	ID              []byte
 	EncryptedBlob   []byte
+	AccessEnvelope  []byte
 	RevokeTokenHash []byte
-	CryptoVersion   int
 }
 
 // insertShare writes a row directly, bypassing CreateShare, so tests can set
@@ -61,17 +61,17 @@ func insertShare(t *testing.T, db *sql.DB, row shareRow) {
 
 	_, err := db.Exec(`
 		INSERT INTO shares (
-			id, encrypted_blob, crypto_version, created_at, expires_at,
+			id, encrypted_blob, access_envelope, created_at, expires_at,
 			views_left, revoke_token_hash, size_bytes
 		) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
 		row.ID,
 		row.EncryptedBlob,
-		row.CryptoVersion,
+		row.AccessEnvelope,
 		row.CreatedAt.Unix(),
 		row.ExpiresAt.Unix(),
 		row.ViewsLeft,
 		row.RevokeTokenHash,
-		len(row.EncryptedBlob),
+		len(row.EncryptedBlob)+len(row.AccessEnvelope),
 	)
 	require.NoError(t, err)
 }

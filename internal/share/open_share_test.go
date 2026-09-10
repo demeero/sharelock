@@ -39,7 +39,6 @@ func TestOpenShare_Exec_ReturnsNotFoundForExpiredShare(t *testing.T) {
 	insertShare(t, db, shareRow{
 		ID:              id,
 		EncryptedBlob:   []byte("payload"),
-		CryptoVersion:   1,
 		CreatedAt:       now.Add(-2 * time.Hour),
 		ExpiresAt:       now.Add(-time.Hour),
 		RevokeTokenHash: make([]byte, sha256Size),
@@ -58,7 +57,6 @@ func TestOpenShare_Exec_KeepsShareWithoutViewLimit(t *testing.T) {
 	insertShare(t, db, shareRow{
 		ID:              id,
 		EncryptedBlob:   []byte("payload"),
-		CryptoVersion:   1,
 		CreatedAt:       now,
 		ExpiresAt:       now.Add(time.Hour),
 		RevokeTokenHash: make([]byte, sha256Size),
@@ -84,7 +82,6 @@ func TestOpenShare_Exec_CountsDownViewsAndDeletesTheLastOne(t *testing.T) {
 	insertShare(t, db, shareRow{
 		ID:              id,
 		EncryptedBlob:   []byte("payload"),
-		CryptoVersion:   1,
 		CreatedAt:       now,
 		ExpiresAt:       now.Add(time.Hour),
 		ViewsLeft:       new(int64(3)),
@@ -121,7 +118,6 @@ func TestOpenShare_Exec_ConcurrentOpensConsumeEachViewOnce(t *testing.T) {
 	insertShare(t, db, shareRow{
 		ID:              id,
 		EncryptedBlob:   []byte("payload"),
-		CryptoVersion:   1,
 		CreatedAt:       now,
 		ExpiresAt:       now.Add(time.Hour),
 		ViewsLeft:       new(int64(allowedViews)),
