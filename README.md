@@ -12,37 +12,37 @@ The browser encrypts every item before upload. The SQLite database stores only a
 - browser-side AES-256-GCM encryption using the Web Crypto API;
 - optional browser-side password protection, shared separately from the URL;
 - multiple text or file items in one share;
-- fixed expiration and an optional limit on how many times a share may be opened;
+- a selected expiration and an optional limit on how many times a share may be opened;
 - a separate revoke capability returned only at creation time;
 - a small terminal-style Web UI, compiled to static assets and embedded in the Go binary;
 - liveness and readiness probes for container orchestrators.
 
 It intentionally does not include accounts, teams, RBAC, search, revisions, audit trails, password vaulting, secret rotation, or external infrastructure.
 
-## How It Looks
+## How it looks
 
-Creating a share, copying the link, and opening it once as the recipient:
+Creating a password-protected share that is deleted after its first allowed open:
 
-![Sharelock: creating an encrypted share and opening it as the recipient](docs/media/demo.gif)
+![Sharelock: create, protect, open, and burn an encrypted share](docs/media/demo.gif)
 
 <details>
 <summary>Screenshots</summary>
 
-**Create a share.** Paste text or attach a file, choose an expiration, and optionally cap how many times the share may be opened. The payload is encrypted before the request leaves the browser.
+**Create a share.** Add text or a file, choose an expiration and open limit, and optionally protect the encrypted bundle with a separate password.
 
-![Create encrypted share form with a filled payload and delivery policy](docs/media/create-share.png)
+![Create encrypted share with a one-open limit and separate password](docs/media/create-share.png)
 
-**Share ready.** The share URL carries the decryption key after `#`; the separate revoke URL is shown only once, at creation time.
+**Share ready.** The complete share URL contains the decryption key after `#`; the password is sent separately. The revoke URL is shown only once.
 
-![Share ready screen with the share URL and the revoke URL](docs/media/share-ready.png)
+![Share ready screen showing the password notice and revoke capability](docs/media/share-ready.png)
 
-**Open a share.** The recipient gets ciphertext from the server and decrypts it locally with the key from the URL fragment.
+**Verify the password locally.** An incorrect password never consumes a limited open.
 
-![Sealed share waiting to be decrypted in the browser](docs/media/open-sealed.png)
+![Password prompt before opening an encrypted share](docs/media/open-password.png)
 
-**Decrypted payloads.** Plaintext exists only in that browser tab. A share with an open limit reports how many opens are left, and is deleted from the server on the last one.
+**Open and decrypt.** The last allowed open permanently removes the ciphertext from the server.
 
-![Decrypted payload with a burned-after-open notice](docs/media/decrypted.png)
+![Decrypted payload with the burned-after-open notice](docs/media/decrypted.png)
 
 **Revoke.** Anyone holding the revoke URL can permanently delete the ciphertext, after an explicit confirmation.
 
