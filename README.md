@@ -11,7 +11,7 @@ The browser encrypts every item before upload. The SQLite database stores only a
 - a single Go binary and an embedded SQLite database;
 - browser-side AES-256-GCM encryption using the Web Crypto API;
 - optional browser-side password protection, shared separately from the URL;
-- multiple text or file items in one share;
+- multiple text or file items in one share, with optional accompanying text for each file;
 - a selected expiration and an optional limit on how many times a share may be opened;
 - a separate revoke capability returned only at creation time;
 - a small terminal-style Web UI, compiled to static assets and embedded in the Go binary;
@@ -28,7 +28,7 @@ Creating a password-protected share that is deleted after its first allowed open
 <details>
 <summary>Screenshots</summary>
 
-**Create a share.** Add text or a file, choose an expiration and open limit, and optionally protect the encrypted bundle with a separate password.
+**Create a share.** Add text, a file, or a file with accompanying text, choose an expiration and open limit, and optionally protect the encrypted bundle with a separate password.
 
 ![Create encrypted share with a one-open limit and separate password](docs/media/create-share.png)
 
@@ -236,6 +236,8 @@ docker run -d \
 ```
 
 ## Security boundary
+
+Accompanying text is encrypted with the file in the browser and shares the same total encrypted-size budget. Recipients copy the text separately and download the original file. Existing share links remain readable; older clients can open new shares but omit accompanying text.
 
 The service protects a stolen SQLite file from revealing content, because it contains ciphertext only. It does **not** protect against a malicious or compromised live server serving altered JavaScript; Use HTTPS, keep all static assets local, and share the URL only through a trusted channel.
 

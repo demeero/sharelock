@@ -11,6 +11,8 @@ const passwordVerifierAdditionalData = encoder.encode("sharelock/password-verifi
 const passwordPayloadAdditionalData = encoder.encode("sharelock/share-payload/v2");
 
 export type EncryptedItem = {
+  // Optional within the encrypted v1 manifest; older clients ignore this field.
+  accompanying_text?: string;
   bytes_base64: string;
   content_type: string;
   name: string;

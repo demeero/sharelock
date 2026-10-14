@@ -3,17 +3,14 @@
 
   import { apiClient, apiError } from "../../shared/api/client";
   import { bytesToBase64URL } from "../../shared/crypto/base64url";
-  import {
-    encryptedShareByteLength,
-    encryptItems,
-    type EncryptedItem,
-  } from "../../shared/crypto/share-crypto";
+  import { encryptedShareByteLength, encryptItems } from "../../shared/crypto/share-crypto";
   import { formatBytes } from "../../shared/format/bytes";
   import AppShell from "../../shared/ui/AppShell.svelte";
   import CopyField from "../../shared/ui/CopyField.svelte";
   import Icon from "../../shared/ui/Icon.svelte";
   import Notice from "../../shared/ui/Notice.svelte";
   import ShareItemForm from "./ShareItemForm.svelte";
+  import { collectItems, draftItemsByteLength } from "./draft-items";
   import type { DraftItem } from "./types";
 
   const preferredExpirySeconds = [3600, 86400, 604800, 2592000];
@@ -48,12 +45,7 @@
   let payloadCount = $derived(items.filter((item) => item.file || item.text.length > 0).length);
   let expiryOptions = $derived(settings ? allowedExpiryOptions(settings.max_ttl_seconds) : []);
   let selectedExpiryLabel = $derived(formatDuration(Number(expiresInSeconds)));
-  let totalBytes = $derived(
-    items.reduce(
-      (total, item) => total + (item.file?.size ?? new TextEncoder().encode(item.text).byteLength),
-      0,
-    ),
-  );
+  let totalBytes = $derived(draftItemsByteLength(items));
   // Clearing the number input leaves allowedOpens undefined, so the label falls
   // back instead of rendering "undefined opens" until a valid count is typed.
   let openPolicyLabel = $derived.by(() => {
@@ -142,7 +134,7 @@
     error = "";
     busy = true;
     try {
-      const encryptedItems = await collectItems();
+      const encryptedItems = await collectItems(items);
       if (encryptedItems.length === 0) {
         throw new Error("Add at least one non-empty text value or file.");
       }
@@ -198,31 +190,6 @@
     } finally {
       busy = false;
     }
-  }
-
-  async function collectItems(): Promise<EncryptedItem[]> {
-    const result: EncryptedItem[] = [];
-    for (const [index, item] of items.entries()) {
-      if (item.file && item.text.length > 0) {
-        throw new Error(
-          `Payload ${index + 1} contains both text and a file. Clear one before continuing.`,
-        );
-      }
-      if (!item.file && item.text.length === 0) {
-        continue;
-      }
-
-      const bytes = item.file
-        ? new Uint8Array(await item.file.arrayBuffer())
-        : new TextEncoder().encode(item.text);
-      result.push({
-        name: item.name.trim() || item.file?.name || `item-${index + 1}.txt`,
-        content_type: item.file?.type || "text/plain;charset=utf-8",
-        bytes_base64: bytesToBase64URL(bytes),
-      });
-    }
-
-    return result;
   }
 
   function allowedExpiryOptions(maxTTLSeconds: number): ExpiryOption[] {
@@ -326,7 +293,8 @@
           <h1>Create encrypted share</h1>
           <p>
             <mark fg-="foreground2"
-              >Paste text or attach a file. Encryption happens before data leaves this browser.</mark
+              >Paste text, attach a file, or include both. Encryption happens before data leaves
+              this browser.</mark
             >
           </p>
           <details is-="accordion">
