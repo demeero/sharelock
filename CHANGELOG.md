@@ -1,3 +1,16 @@
+## [2.2.0] - 2026-10-14
+
+### 🚀 Features
+
+- Files with text
+
+### 📚 Documentation
+
+- Update demo
+
+### ⚙️ Miscellaneous Tasks
+
+- Bump golanci lint version
 ## [2.1.0] - 2026-09-10
 
 ### 🚀 Features
