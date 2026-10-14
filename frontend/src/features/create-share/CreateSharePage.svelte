@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { messages } from "../../shared/i18n/locale";
+  import { errorMessage, LocalizedError } from "../../shared/i18n/errors";
   import { onMount } from "svelte";
 
   import { apiClient, apiError } from "../../shared/api/client";
@@ -30,7 +32,7 @@
   let passwordConfirmation = $state("");
   let passwordsVisible = $state(false);
   let busy = $state(false);
-  let error = $state("");
+  let error = $state<unknown>(null);
   let created = $state<{ passwordProtected: boolean; revokeURL: string; shareURL: string } | null>(
     null,
   );
@@ -40,7 +42,7 @@
     max_views: number;
   } | null>(null);
   let settingsLoading = $state(true);
-  let settingsError = $state("");
+  let settingsError = $state<unknown>(null);
 
   let payloadCount = $derived(items.filter((item) => item.file || item.text.length > 0).length);
   let expiryOptions = $derived(settings ? allowedExpiryOptions(settings.max_ttl_seconds) : []);
@@ -50,16 +52,16 @@
   // back instead of rendering "undefined opens" until a valid count is typed.
   let openPolicyLabel = $derived.by(() => {
     if (!limitOpens) {
-      return "unlimited opens";
+      return $messages.unlimited;
     }
     if (!Number.isSafeInteger(allowedOpens)) {
-      return "open limit not set";
+      return $messages.limitNotSet;
     }
 
-    return `${allowedOpens} ${allowedOpens === 1 ? "open" : "opens"}`;
+    return $messages.opens(allowedOpens!);
   });
   let summary = $derived(
-    `${payloadCount} ${payloadCount === 1 ? "payload" : "payloads"} · ${formatBytes(totalBytes)} · expires in ${selectedExpiryLabel} · ${openPolicyLabel}`,
+    `${$messages.payloads(payloadCount)} · ${formatBytes(totalBytes)} · ${$messages.expiresIn(selectedExpiryLabel)} · ${openPolicyLabel}`,
   );
 
   onMount(() => {
@@ -95,32 +97,32 @@
 
   async function loadSettings(): Promise<void> {
     settingsLoading = true;
-    settingsError = "";
+    settingsError = null;
     try {
       const { data, error: responseError } = await apiClient.GET("/api/v1/shares/settings");
       if (!data) {
-        settingsError = apiError(responseError, "Could not load share settings.").message;
+        settingsError = apiError(responseError, new LocalizedError((m) => m.settingsFailed));
         return;
       }
 
       const options = allowedExpiryOptions(data.max_ttl_seconds);
       if (!Number.isSafeInteger(data.max_encrypted_bytes) || data.max_encrypted_bytes <= 0) {
-        settingsError = "The server returned an invalid encrypted share size limit.";
+        settingsError = new LocalizedError((m) => m.invalidSize);
         return;
       }
       if (options.length === 0) {
-        settingsError = "The server returned an invalid maximum share lifetime.";
+        settingsError = new LocalizedError((m) => m.invalidLifetime);
         return;
       }
       if (!Number.isSafeInteger(data.max_views) || data.max_views < 1) {
-        settingsError = "The server returned an invalid maximum number of opens.";
+        settingsError = new LocalizedError((m) => m.invalidOpens);
         return;
       }
 
       settings = data;
       expiresInSeconds = String(defaultExpirySeconds(options));
     } catch (caught) {
-      settingsError = caught instanceof Error ? caught.message : "Could not load share settings.";
+      settingsError = caught;
     } finally {
       settingsLoading = false;
     }
@@ -131,29 +133,32 @@
       return;
     }
 
-    error = "";
+    error = null;
     busy = true;
     try {
       const encryptedItems = await collectItems(items);
       if (encryptedItems.length === 0) {
-        throw new Error("Add at least one non-empty text value or file.");
+        throw new LocalizedError((m) => m.addContent);
       }
       if (limitOpens && !isAllowedOpenCount(allowedOpens, settings.max_views)) {
-        throw new Error(`Choose between 1 and ${settings.max_views} opens.`);
+        throw new LocalizedError((m) => m.chooseOpens(settings!.max_views));
       }
 
       if (passwordProtected && password.length === 0) {
-        throw new Error("Enter a password to protect this share.");
+        throw new LocalizedError((m) => m.enterPassword);
       }
       if (passwordProtected && password !== passwordConfirmation) {
-        throw new Error("The password confirmation does not match.");
+        throw new LocalizedError((m) => m.passwordMismatch);
       }
 
       const sharePassword = passwordProtected ? password : undefined;
       const expectedEnvelopeBytes = encryptedShareByteLength(encryptedItems, sharePassword);
       if (expectedEnvelopeBytes > settings.max_encrypted_bytes) {
-        throw new Error(
-          `The encrypted share would be ${formatBytes(expectedEnvelopeBytes)}. The server limit is ${formatBytes(settings.max_encrypted_bytes)}.`,
+        throw new LocalizedError((m) =>
+          m.tooLargeExpected(
+            formatBytes(expectedEnvelopeBytes),
+            formatBytes(settings!.max_encrypted_bytes),
+          ),
         );
       }
 
@@ -162,8 +167,8 @@
         new TextEncoder().encode(encryptedShare.envelope).byteLength +
         new TextEncoder().encode(encryptedShare.accessEnvelope ?? "").byteLength;
       if (encryptedBytes > settings.max_encrypted_bytes) {
-        throw new Error(
-          `The encrypted share is ${formatBytes(encryptedBytes)}. The server limit is ${formatBytes(settings.max_encrypted_bytes)}.`,
+        throw new LocalizedError((m) =>
+          m.tooLarge(formatBytes(encryptedBytes), formatBytes(settings!.max_encrypted_bytes)),
         );
       }
       const { data, error: responseError } = await apiClient.POST("/api/v1/shares", {
@@ -175,7 +180,7 @@
         },
       });
       if (!data) {
-        throw apiError(responseError, "Could not create the share.");
+        throw apiError(responseError, new LocalizedError((m) => m.createError));
       }
       const baseURL = `${window.location.origin}/s/${data.id}`;
       created = {
@@ -186,7 +191,7 @@
       password = "";
       passwordConfirmation = "";
     } catch (caught) {
-      error = caught instanceof Error ? caught.message : "Could not create the share.";
+      error = caught;
     } finally {
       busy = false;
     }
@@ -219,17 +224,7 @@
   }
 
   function formatDuration(seconds: number): string {
-    if (seconds % 86400 === 0) {
-      return `${seconds / 86400} day${seconds === 86400 ? "" : "s"}`;
-    }
-    if (seconds % 3600 === 0) {
-      return `${seconds / 3600} hour${seconds === 3600 ? "" : "s"}`;
-    }
-    if (seconds % 60 === 0) {
-      return `${seconds / 60} minute${seconds === 60 ? "" : "s"}`;
-    }
-
-    return `${seconds} second${seconds === 1 ? "" : "s"}`;
+    return $messages.duration(seconds);
   }
 </script>
 
@@ -239,69 +234,61 @@
   {#if created}
     <section box-="square" shear-="top" is-="column" gap-="1">
       <div is-="row" wrap- align-="center between" gap-="1">
-        <span is-="badge" variant-="background0">SHARE READY</span>
-        <span is-="badge" variant-="green"><Icon name="check" /> READY</span>
+        <span is-="badge" variant-="background0">{$messages.shareReady}</span>
+        <span is-="badge" variant-="green"><Icon name="check" /> {$messages.ready}</span>
       </div>
 
       <div pad-="2 1" is-="column" gap-="2">
         <div is-="column" gap-="1">
-          <h1>Create encrypted share</h1>
-          <p>The ciphertext is stored. The decryption key exists only in the complete share URL.</p>
+          <h1>{$messages.createTitle}</h1>
+          <p>{$messages.stored}</p>
         </div>
 
-        <CopyField label="Share URL" value={created.shareURL} />
+        <CopyField label={$messages.shareURL} value={created.shareURL} />
 
         {#if created.passwordProtected}
           <Notice
-            status="PASSWORD REQUIRED"
+            status={$messages.passwordRequired}
             tone="yellow"
-            message="The recipient must enter the password you chose. Send it through a separate trusted channel; it is not part of this URL."
+            message={$messages.passwordDelivery}
           />
         {/if}
 
         <section box-="square" shear-="top" is-="column" gap-="1">
           <div is-="row" wrap- align-="center between" gap-="1">
-            <span is-="badge" variant-="background0">REVOKE CAPABILITY</span>
-            <span is-="badge" variant-="red"><Icon name="key" /> ADMIN</span>
+            <span is-="badge" variant-="background0">{$messages.revokeCapability}</span>
+            <span is-="badge" variant-="red"><Icon name="key" /> {$messages.admin}</span>
           </div>
           <div pad-="1" is-="column" gap-="1">
-            <p>Anyone holding this URL can permanently revoke the share. Store it separately.</p>
-            <CopyField label="Revoke URL" value={created.revokeURL} tone="red" />
+            <p>{$messages.revokeWarning}</p>
+            <CopyField label={$messages.revokeURL} value={created.revokeURL} tone="red" />
           </div>
         </section>
 
-        <Notice
-          status="ONE-TIME OUTPUT"
-          tone="yellow"
-          message="Neither URL can be recovered later. Send the share URL only through a trusted channel."
-        />
+        <Notice status={$messages.oneTime} tone="yellow" message={$messages.linksWarning} />
 
         <div is-="row" wrap- align-="center end" gap-="1">
-          <a href="/">Create another share</a>
+          <a href="/">{$messages.createAnother}</a>
         </div>
       </div>
     </section>
   {:else}
     <section box-="square" shear-="top" is-="column" gap-="1">
       <div is-="row" wrap- align-="center between" gap-="1">
-        <span is-="badge" variant-="background0">ENCRYPTED</span>
+        <span is-="badge" variant-="background0">{$messages.encrypted}</span>
         <span is-="badge" variant-="mauve"><Icon name="lock" /> AES-256-GCM</span>
       </div>
 
       <div pad-="2 1" is-="column" gap-="2">
         <div is-="column" gap-="1">
-          <h1>Create encrypted share</h1>
+          <h1>{$messages.createTitle}</h1>
           <p>
-            <mark fg-="foreground2"
-              >Paste text, attach a file, or include both. Encryption happens before data leaves
-              this browser.</mark
-            >
+            <mark fg-="foreground2">{$messages.createIntro}</mark>
           </p>
           <details is-="accordion">
-            <summary>Privacy model</summary>
+            <summary>{$messages.privacy}</summary>
             <p>
-              The share URL includes a decryption key after <code>#</code>. That fragment never
-              reaches Sharelock; send the complete URL only through a trusted channel.
+              {$messages.privacyBefore} <code>#</code>{$messages.privacyAfter}
             </p>
           </details>
         </div>
@@ -309,17 +296,23 @@
         {#if settingsLoading}
           <div is-="row" align-="center start" gap-="1" aria-live="polite">
             <span is-="spinner" variant-="dots" aria-hidden="true"></span>
-            <span>Loading server settings…</span>
+            <span>{$messages.loadingSettings}</span>
           </div>
         {:else if settingsError}
           <div is-="column" gap-="1">
-            <Notice status="SETTINGS UNAVAILABLE" message={settingsError} />
+            <Notice
+              status={$messages.settingsUnavailable}
+              message={errorMessage(settingsError, $messages, $messages.settingsFailed)}
+            />
             <div is-="row" wrap- align-="center start" gap-="1">
-              <button box-="round" type="button" onclick={() => void loadSettings()}>Retry</button>
+              <button box-="round" type="button" onclick={() => void loadSettings()}
+                >{$messages.retry}</button
+              >
             </div>
           </div>
         {:else if settings}
           <form
+            novalidate
             is-="column"
             gap-="2"
             onsubmit={(event) => {
@@ -345,27 +338,27 @@
                 box-="round"
                 type="button"
                 onclick={() => (items = [...items, newDraftItem()])}
-                disabled={busy}>+ Add payload</button
+                disabled={busy}>{$messages.addPayload}</button
               >
             </div>
 
             <section box-="square" shear-="top" is-="column" gap-="1">
               <div is-="row" wrap- align-="center between" gap-="1">
-                <span is-="badge" variant-="background0">DELIVERY POLICY</span>
+                <span is-="badge" variant-="background0">{$messages.deliveryPolicy}</span>
                 <div is-="row" wrap- align-="center end" gap-="1">
                   <span is-="badge" variant-="background2">{selectedExpiryLabel}</span>
                   <span is-="badge" variant-="background2">{openPolicyLabel}</span>
                 </div>
               </div>
               <div pad-="1" is-="column" gap-="1">
-                <p>Expires after</p>
+                <p>{$messages.expiresAfter}</p>
                 <div
                   is-="row"
                   wrap-
                   align-="center start"
                   gap-="1"
                   role="radiogroup"
-                  aria-label="expires after"
+                  aria-label={$messages.expiresAfter}
                 >
                   {#each expiryOptions as option (option.seconds)}
                     <label
@@ -381,13 +374,14 @@
                   {/each}
                 </div>
                 <label
-                  ><input is-="switch" type="checkbox" bind:checked={limitOpens} disabled={busy} /> Limit
-                  number of opens</label
+                  ><input is-="switch" type="checkbox" bind:checked={limitOpens} disabled={busy} />
+                  {$messages.limitOpens}</label
                 >
                 {#if limitOpens}
                   <label is-="column" gap-="1">
                     <span
-                      >Opens allowed <mark fg-="foreground2">(1-{settings.max_views})</mark></span
+                      >{$messages.opensAllowed}
+                      <mark fg-="foreground2">(1-{settings.max_views})</mark></span
                     >
                     <input
                       type="number"
@@ -399,9 +393,7 @@
                     />
                   </label>
                   <p>
-                    <mark fg-="foreground2"
-                      >The share is deleted from the server on its last allowed open.</mark
-                    >
+                    <mark fg-="foreground2">{$messages.lastOpenDeletion}</mark>
                   </p>
                 {/if}
 
@@ -412,12 +404,12 @@
                     bind:checked={passwordProtected}
                     disabled={busy}
                   />
-                  Protect with a separate password
+                  {$messages.protectPassword}
                 </label>
                 {#if passwordProtected}
                   <div is-="column" gap-="1">
                     <label is-="column" gap-="1">
-                      <span>Password</span>
+                      <span>{$messages.password}</span>
                       <input
                         type={passwordsVisible ? "text" : "password"}
                         autocomplete="new-password"
@@ -426,7 +418,7 @@
                       />
                     </label>
                     <label is-="column" gap-="1">
-                      <span>Confirm password</span>
+                      <span>{$messages.confirmPassword}</span>
                       <input
                         type={passwordsVisible ? "text" : "password"}
                         autocomplete="new-password"
@@ -440,14 +432,13 @@
                         type="button"
                         onclick={() => (passwordsVisible = !passwordsVisible)}
                         disabled={busy}
-                        >{passwordsVisible ? "Hide passwords" : "Show passwords"}</button
+                        >{passwordsVisible
+                          ? $messages.hidePasswords
+                          : $messages.showPasswords}</button
                       >
                     </div>
                     <p>
-                      <mark fg-="foreground2"
-                        >The password is used only in this browser and is never included in the
-                        share URL or upload.</mark
-                      >
+                      <mark fg-="foreground2">{$messages.passwordPrivacy}</mark>
                     </p>
                   </div>
                 {/if}
@@ -460,19 +451,18 @@
 
             {#if error}
               <Notice
-                status="CREATE FAILED"
-                message={error}
+                status={$messages.createFailed}
+                message={errorMessage(error, $messages, $messages.createError)}
                 recoveryHref="/"
-                recoveryLabel="Reset form"
+                recoveryLabel={$messages.resetForm}
               />
             {/if}
 
             <div is-="row" wrap- align-="center between" gap-="1">
               <span is-="badge" variant-="background2">Ctrl/Cmd + Enter</span>
               <button box-="round" variant-="mauve" type="submit" disabled={busy}>
-                {#if busy}<span is-="spinner" variant-="dots" aria-hidden="true"></span> Encrypting…{:else}<Icon
-                    name="lock"
-                  /> Encrypt & create{/if}
+                {#if busy}<span is-="spinner" variant-="dots" aria-hidden="true"></span>
+                  {$messages.encrypting}{:else}<Icon name="lock" /> {$messages.encryptCreate}{/if}
               </button>
             </div>
           </form>

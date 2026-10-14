@@ -4,9 +4,11 @@ import type { components, paths } from "./openapi.gen";
 
 export const apiClient = createClient<paths>({ baseUrl: "" });
 
+export class ServerError extends Error {}
+
 export function apiError(
   error: components["schemas"]["ErrorModel"] | undefined,
-  fallback: string,
+  fallback: Error,
 ): Error {
-  return new Error(error?.detail ?? fallback);
+  return error?.detail == null ? fallback : new ServerError(error.detail);
 }
