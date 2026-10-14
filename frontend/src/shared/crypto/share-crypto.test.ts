@@ -1,32 +1,43 @@
 import { describe, expect, it } from "vitest";
 
-import { bytesToBase64URL } from "./base64url";
+import { base64URLToBytes, bytesToBase64URL } from "./base64url";
 import {
-  decryptItems,
-  decryptPasswordProtectedItems,
+  decryptPasswordProtectedPayloadBlocks,
+  decryptPayloadBlocks,
   encryptedShareByteLength,
-  encryptItems,
+  encryptPayloadBlocks,
+  toArrayBuffer,
   verifyPassword,
-  type EncryptedItem,
+  type EncryptedFile,
+  type PayloadBlock,
 } from "./share-crypto";
 
-const items: EncryptedItem[] = [
-  {
-    name: "secret.txt",
-    content_type: "text/plain;charset=utf-8",
-    bytes_base64: bytesToBase64URL(new TextEncoder().encode("correct horse battery staple")),
-  },
-];
+const encoder = new TextEncoder();
+
+const secretFile: EncryptedFile = {
+  name: "secret.txt",
+  content_type: "text/plain;charset=utf-8",
+  bytes_base64: bytesToBase64URL(encoder.encode("correct horse battery staple")),
+};
+
+const payloadBlocks: PayloadBlock[] = [{ file: secretFile }, { text: "Read this first." }];
 
 describe("share crypto", () => {
-  it("keeps shares without a password readable with only the URL key", async () => {
-    const share = await encryptItems(items);
+  it("creates version 2 payload blocks for file-only and text-note-only shares", async () => {
+    const share = await encryptPayloadBlocks(payloadBlocks);
 
-    await expect(decryptItems(share.envelope, bytesToBase64URL(share.key))).resolves.toEqual(items);
+    await expect(
+      decryptPayloadBlocks(share.envelope, bytesToBase64URL(share.key)),
+    ).resolves.toEqual(payloadBlocks);
+
+    await expect(decryptUnprotectedManifest(share.envelope, share.key)).resolves.toEqual({
+      version: 2,
+      blocks: payloadBlocks,
+    });
   });
 
-  it("requires both the URL key and password for a password-protected share", async () => {
-    const share = await encryptItems(items, "separate password");
+  it("requires both the URL key and password for version 2 payload blocks", async () => {
+    const share = await encryptPayloadBlocks(payloadBlocks, "separate password");
 
     if (!share.accessEnvelope) {
       throw new Error("expected a password-protected share");
@@ -36,11 +47,13 @@ describe("share crypto", () => {
       bytesToBase64URL(share.key),
       "separate password",
     );
-    await expect(decryptPasswordProtectedItems(share.envelope, cryptoKey)).resolves.toEqual(items);
+    await expect(decryptPasswordProtectedPayloadBlocks(share.envelope, cryptoKey)).resolves.toEqual(
+      payloadBlocks,
+    );
   });
 
   it("rejects an incorrect password without needing the payload envelope", async () => {
-    const share = await encryptItems(items, "separate password");
+    const share = await encryptPayloadBlocks(payloadBlocks, "separate password");
     if (!share.accessEnvelope) {
       throw new Error("expected a password-protected share");
     }
@@ -51,19 +64,97 @@ describe("share crypto", () => {
   });
 
   it("rejects malformed password verifier metadata", async () => {
-    const share = await encryptItems(items, "separate password");
+    const share = await encryptPayloadBlocks(payloadBlocks, "separate password");
 
     await expect(
       verifyPassword('{"algorithm":"AES-GCM"}', bytesToBase64URL(share.key), "separate password"),
     ).rejects.toThrow("Invalid password-protected share format");
   });
 
-  it("includes the verifier when estimating password-protected share size", async () => {
-    const share = await encryptItems(items, "separate password");
-    const actualBytes =
-      new TextEncoder().encode(share.envelope).byteLength +
-      new TextEncoder().encode(share.accessEnvelope ?? "").byteLength;
+  it("opens every legacy item as its own payload block", async () => {
+    const legacyFile: EncryptedFile = {
+      name: "legacy.txt",
+      content_type: "text/plain;charset=utf-8",
+      bytes_base64: bytesToBase64URL(encoder.encode("legacy text")),
+    };
+    const legacyManifest = { version: 1, items: [secretFile, legacyFile] };
+    const key = new Uint8Array(32).fill(7);
+    const envelope = await encryptUnprotectedManifest(legacyManifest, key);
 
-    expect(encryptedShareByteLength(items, "separate password")).toBe(actualBytes);
+    await expect(decryptPayloadBlocks(envelope, bytesToBase64URL(key))).resolves.toEqual([
+      { file: secretFile },
+      { file: legacyFile },
+    ]);
+  });
+
+  it("rejects empty version 2 payload blocks during encryption and decryption", async () => {
+    await expect(encryptPayloadBlocks([{ text: " \n\t " }])).rejects.toThrow(
+      "Invalid payload block",
+    );
+
+    const key = new Uint8Array(32).fill(8);
+    const malformedEnvelope = await encryptUnprotectedManifest(
+      {
+        version: 2,
+        blocks: [
+          {
+            file: {
+              name: "malformed.txt",
+              content_type: "text/plain;charset=utf-8",
+              bytes_base64: "not-valid-base64url!",
+            },
+          },
+        ],
+      },
+      key,
+    );
+
+    await expect(decryptPayloadBlocks(malformedEnvelope, bytesToBase64URL(key))).rejects.toThrow(
+      "Invalid decrypted-share format",
+    );
+  });
+
+  it("includes version 2 payload blocks and the verifier when estimating password-protected share size", async () => {
+    const share = await encryptPayloadBlocks(payloadBlocks, "separate password");
+    const actualBytes =
+      encoder.encode(share.envelope).byteLength +
+      encoder.encode(share.accessEnvelope ?? "").byteLength;
+
+    expect(encryptedShareByteLength(payloadBlocks, "separate password")).toBe(actualBytes);
   });
 });
+
+async function decryptUnprotectedManifest(envelopeJSON: string, key: Uint8Array): Promise<unknown> {
+  const envelope: { ciphertext: string; iv: string } = JSON.parse(envelopeJSON);
+  const cryptoKey = await crypto.subtle.importKey("raw", toArrayBuffer(key), "AES-GCM", false, [
+    "decrypt",
+  ]);
+  const plainText = await crypto.subtle.decrypt(
+    {
+      name: "AES-GCM",
+      iv: toArrayBuffer(base64URLToBytes(envelope.iv)),
+    },
+    cryptoKey,
+    toArrayBuffer(base64URLToBytes(envelope.ciphertext)),
+  );
+
+  return JSON.parse(new TextDecoder().decode(plainText));
+}
+
+async function encryptUnprotectedManifest(manifest: unknown, key: Uint8Array): Promise<string> {
+  const iv = new Uint8Array(12).fill(9);
+  const cryptoKey = await crypto.subtle.importKey("raw", toArrayBuffer(key), "AES-GCM", false, [
+    "encrypt",
+  ]);
+  const ciphertext = await crypto.subtle.encrypt(
+    { name: "AES-GCM", iv: toArrayBuffer(iv) },
+    cryptoKey,
+    encoder.encode(JSON.stringify(manifest)),
+  );
+
+  return JSON.stringify({
+    algorithm: "AES-GCM",
+    iv: bytesToBase64URL(iv),
+    ciphertext: bytesToBase64URL(new Uint8Array(ciphertext)),
+  });
+}

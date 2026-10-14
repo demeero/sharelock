@@ -4,9 +4,9 @@
   import { apiClient, apiError } from "../../shared/api/client";
   import { bytesToBase64URL } from "../../shared/crypto/base64url";
   import {
+    encryptPayloadBlocks,
     encryptedShareByteLength,
-    encryptItems,
-    type EncryptedItem,
+    type PayloadBlock,
   } from "../../shared/crypto/share-crypto";
   import { formatBytes } from "../../shared/format/bytes";
   import AppShell from "../../shared/ui/AppShell.svelte";
@@ -45,14 +45,16 @@
   let settingsLoading = $state(true);
   let settingsError = $state("");
 
-  let payloadCount = $derived(items.filter((item) => item.file || item.text.length > 0).length);
+  let payloadCount = $derived(
+    items.filter((item) => item.file || item.text.trim().length > 0).length,
+  );
   let expiryOptions = $derived(settings ? allowedExpiryOptions(settings.max_ttl_seconds) : []);
   let selectedExpiryLabel = $derived(formatDuration(Number(expiresInSeconds)));
   let totalBytes = $derived(
-    items.reduce(
-      (total, item) => total + (item.file?.size ?? new TextEncoder().encode(item.text).byteLength),
-      0,
-    ),
+    items.reduce((total, item) => {
+      const textBytes = new TextEncoder().encode(item.text.trim().length > 0 ? item.text : "");
+      return total + (item.file?.size ?? textBytes.byteLength);
+    }, 0),
   );
   // Clearing the number input leaves allowedOpens undefined, so the label falls
   // back instead of rendering "undefined opens" until a valid count is typed.
@@ -142,8 +144,8 @@
     error = "";
     busy = true;
     try {
-      const encryptedItems = await collectItems();
-      if (encryptedItems.length === 0) {
+      const payloadBlocks = await collectPayloadBlocks();
+      if (payloadBlocks.length === 0) {
         throw new Error("Add at least one non-empty text value or file.");
       }
       if (limitOpens && !isAllowedOpenCount(allowedOpens, settings.max_views)) {
@@ -158,14 +160,14 @@
       }
 
       const sharePassword = passwordProtected ? password : undefined;
-      const expectedEnvelopeBytes = encryptedShareByteLength(encryptedItems, sharePassword);
+      const expectedEnvelopeBytes = encryptedShareByteLength(payloadBlocks, sharePassword);
       if (expectedEnvelopeBytes > settings.max_encrypted_bytes) {
         throw new Error(
           `The encrypted share would be ${formatBytes(expectedEnvelopeBytes)}. The server limit is ${formatBytes(settings.max_encrypted_bytes)}.`,
         );
       }
 
-      const encryptedShare = await encryptItems(encryptedItems, sharePassword);
+      const encryptedShare = await encryptPayloadBlocks(payloadBlocks, sharePassword);
       const encryptedBytes =
         new TextEncoder().encode(encryptedShare.envelope).byteLength +
         new TextEncoder().encode(encryptedShare.accessEnvelope ?? "").byteLength;
@@ -200,26 +202,32 @@
     }
   }
 
-  async function collectItems(): Promise<EncryptedItem[]> {
-    const result: EncryptedItem[] = [];
+  async function collectPayloadBlocks(): Promise<PayloadBlock[]> {
+    const result: PayloadBlock[] = [];
     for (const [index, item] of items.entries()) {
-      if (item.file && item.text.length > 0) {
+      const hasText = item.text.trim().length > 0;
+      if (item.file && hasText) {
         throw new Error(
           `Payload ${index + 1} contains both text and a file. Clear one before continuing.`,
         );
       }
-      if (!item.file && item.text.length === 0) {
+      if (!item.file && !hasText) {
         continue;
       }
 
-      const bytes = item.file
-        ? new Uint8Array(await item.file.arrayBuffer())
-        : new TextEncoder().encode(item.text);
-      result.push({
-        name: item.name.trim() || item.file?.name || `item-${index + 1}.txt`,
-        content_type: item.file?.type || "text/plain;charset=utf-8",
-        bytes_base64: bytesToBase64URL(bytes),
-      });
+      if (item.file) {
+        const bytes = new Uint8Array(await item.file.arrayBuffer());
+        result.push({
+          file: {
+            name: item.name.trim() || item.file.name || `payload-${index + 1}`,
+            content_type: item.file.type || "application/octet-stream",
+            bytes_base64: bytesToBase64URL(bytes),
+          },
+        });
+        continue;
+      }
+
+      result.push({ text: item.text });
     }
 
     return result;

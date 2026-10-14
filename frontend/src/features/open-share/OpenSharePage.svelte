@@ -1,10 +1,10 @@
 <script lang="ts">
   import { apiClient, apiError } from "../../shared/api/client";
   import {
-    decryptItems,
-    decryptPasswordProtectedItems,
+    decryptPasswordProtectedPayloadBlocks,
+    decryptPayloadBlocks,
     verifyPassword,
-    type EncryptedItem,
+    type PayloadBlock,
   } from "../../shared/crypto/share-crypto";
   import AppShell from "../../shared/ui/AppShell.svelte";
   import Icon from "../../shared/ui/Icon.svelte";
@@ -19,7 +19,7 @@
 
   const fragment = new URLSearchParams(window.location.hash.slice(1));
   const revokeToken = fragment.get("revoke");
-  let items = $state<EncryptedItem[] | null>(null);
+  let payloadBlocks = $state<PayloadBlock[] | null>(null);
   let burned = $state(false);
   let viewsLeft = $state<number | null>(null);
   let busy = $state(false);
@@ -105,10 +105,10 @@
       throw apiError(responseError, "This share is unavailable, expired, burned, or revoked.");
     }
     try {
-      items =
+      payloadBlocks =
         passwordKey === undefined
-          ? await decryptItems(data.envelope, key)
-          : await decryptPasswordProtectedItems(data.envelope, passwordKey);
+          ? await decryptPayloadBlocks(data.envelope, key)
+          : await decryptPasswordProtectedPayloadBlocks(data.envelope, passwordKey);
     } catch {
       errorStatus = "INVALID KEY";
       throw new Error("The decryption key is invalid or the encrypted payload is damaged.");
@@ -230,12 +230,14 @@
         </div>
       </div>
     </dialog>
-  {:else if items}
+  {:else if payloadBlocks}
     <section box-="square" shear-="top" is-="column" gap-="1">
       <div is-="row" wrap- align-="center between" gap-="1">
         <span is-="badge" variant-="background0">DECRYPTED</span>
         <span is-="badge" variant-="green"
-          ><Icon name="check" /> {items.length} {items.length === 1 ? "ITEM" : "ITEMS"}</span
+          ><Icon name="check" />
+          {payloadBlocks.length}
+          {payloadBlocks.length === 1 ? "PAYLOAD" : "PAYLOADS"}</span
         >
       </div>
 
@@ -262,8 +264,8 @@
           />
         {/if}
         <div is-="column" gap-="2">
-          {#each items as item, index (item.name + item.bytes_base64)}
-            <ShareContentItem {item} {index} />
+          {#each payloadBlocks as payloadBlock, index (JSON.stringify(payloadBlock))}
+            <ShareContentItem {payloadBlock} {index} />
           {/each}
         </div>
       </div>

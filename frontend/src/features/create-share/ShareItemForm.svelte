@@ -16,14 +16,15 @@
   let fileInput = $state<HTMLInputElement>();
   let fileError = $state("");
 
-  let contentKind = $derived(item.file ? "FILE" : item.text.length > 0 ? "TEXT" : "EMPTY");
-  let contentTone = $derived(item.file ? "blue" : item.text.length > 0 ? "green" : "foreground2");
-  let fileSelectionDisabled = $derived(disabled || item.text.length > 0);
+  let hasText = $derived(item.text.trim().length > 0);
+  let contentKind = $derived(item.file ? "FILE" : hasText ? "TEXT" : "EMPTY");
+  let contentTone = $derived(item.file ? "blue" : hasText ? "green" : "foreground2");
+  let fileSelectionDisabled = $derived(disabled || hasText);
 
   function updateFile(event: Event): void {
     const input = event.currentTarget as HTMLInputElement;
     const file = input.files?.[0] ?? null;
-    if (file && item.text.length > 0) {
+    if (file && hasText) {
       fileError = "Clear the text before selecting a file.";
       input.value = "";
       return;
@@ -107,7 +108,7 @@
         />
         <span is-="button" box-="round" variant-="blue"><Icon name="file" /> Choose file</span>
         <mark fg-="foreground2">
-          {item.text.length > 0 ? "Clear pasted text to enable files" : "No file selected"}
+          {hasText ? "Clear pasted text to enable files" : "No file selected"}
         </mark>
       </label>
     {/if}

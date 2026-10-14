@@ -18,3 +18,7 @@ vendor/
 data/
 .codex/
 graphify-out/
+.scratch/file-with-note/
+docs/agents/
+docs/adr/
+CONTEXT.md
