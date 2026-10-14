@@ -262,7 +262,7 @@
           />
         {/if}
         <div is-="column" gap-="2">
-          {#each items as item, index (item.name + item.bytes_base64)}
+          {#each items as item, index (index)}
             <ShareContentItem {item} {index} />
           {/each}
         </div>

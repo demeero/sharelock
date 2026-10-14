@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { bytesToBase64URL } from "./base64url";
+import legacyShares from "./testdata/legacy-shares.json";
 import {
   decryptItems,
   decryptPasswordProtectedItems,
@@ -19,6 +20,67 @@ const items: EncryptedItem[] = [
 ];
 
 describe("share crypto", () => {
+  it("opens fixed shares created by the pre-accompanying-text client", async () => {
+    await expect(
+      decryptItems(legacyShares.plain.envelope, legacyShares.plain.key),
+    ).resolves.toEqual(legacyShares.items);
+  });
+
+  it("opens fixed password-protected shares created by the pre-accompanying-text client", async () => {
+    const share = legacyShares.protected;
+    const key = await verifyPassword(share.accessEnvelope, share.key, share.password);
+
+    await expect(decryptPasswordProtectedItems(share.envelope, key)).resolves.toEqual(
+      legacyShares.items,
+    );
+  });
+
+  it.each([undefined, "separate password"])(
+    "encrypts mixed items and counts their complete encrypted size (password: %s)",
+    async (password) => {
+      const mixedItems: EncryptedItem[] = [
+        ...items,
+        {
+          name: 'binary-🔐".bin',
+          content_type: "application/octet-stream",
+          bytes_base64: bytesToBase64URL(new Uint8Array([0, 255, 128, 42])),
+          accompanying_text: '  Інструкція 🔐\n"quotes" \\ slash\t<script>literal</script>  ',
+        },
+        { ...items[0], name: "file-only.txt" },
+        { ...items[0], name: "whitespace.txt", accompanying_text: " \n\t " },
+      ];
+
+      const share = await encryptItems(mixedItems, password);
+      const encodedKey = bytesToBase64URL(share.key);
+      const decrypted =
+        share.accessEnvelope === undefined
+          ? await decryptItems(share.envelope, encodedKey)
+          : await decryptPasswordProtectedItems(
+              share.envelope,
+              await verifyPassword(share.accessEnvelope, encodedKey, password!),
+            );
+
+      expect(decrypted).toEqual(mixedItems);
+      expect(encryptedShareByteLength(mixedItems, password)).toBe(
+        new TextEncoder().encode(share.envelope).byteLength +
+          new TextEncoder().encode(share.accessEnvelope ?? "").byteLength,
+      );
+      expect(encryptedShareByteLength(mixedItems, password)).toBeGreaterThan(
+        encryptedShareByteLength(
+          mixedItems.map((item) => ({
+            name: item.name,
+            content_type: item.content_type,
+            bytes_base64: item.bytes_base64,
+          })),
+          password,
+        ),
+      );
+      expect(share.envelope).not.toContain("Інструкція");
+      expect(share.envelope).not.toContain("accompanying_text");
+      expect(share.envelope).not.toContain("binary-");
+    },
+  );
+
   it("keeps shares without a password readable with only the URL key", async () => {
     const share = await encryptItems(items);
 

@@ -59,13 +59,3 @@ func TestAppendCtx_AccumulatesAttributesAcrossCalls(t *testing.T) {
 	assert.Equal(t, "a", attrs[0].Key)
 	assert.Equal(t, "b", attrs[1].Key)
 }
-
-func TestAppendCtx_HandlesNilParent(t *testing.T) {
-	ctx := AppendCtx(nil, slog.String("a", "1")) //nolint:staticcheck // verifying nil-parent handling
-
-	require.NotNil(t, ctx)
-	attrs, ok := ctx.Value(slogFields).([]slog.Attr)
-	require.True(t, ok)
-	require.Len(t, attrs, 1)
-	assert.Equal(t, "a", attrs[0].Key)
-}

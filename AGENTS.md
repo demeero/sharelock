@@ -50,3 +50,17 @@ not a password manager or a full secret manager.
 - Before changing Go code, read `docs/code-style-and-conventions.md`.
 - Before changing `frontend/**`, read `docs/frontend.md`.
 - Before building frontend assets, changing embedded assets, or local runtime configuration, read `docs/development.md`.
+
+## Agent skills
+
+### Issue tracker
+
+Issues and specs live as local Markdown files under `.scratch/`. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+The default five-label vocabulary is used. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+This repository uses the single-context layout. See `docs/agents/domain.md`.

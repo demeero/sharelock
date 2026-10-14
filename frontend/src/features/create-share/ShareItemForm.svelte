@@ -14,27 +14,24 @@
 
   let { item, index, removable, disabled = false, onChange, onRemove }: Props = $props();
   let fileInput = $state<HTMLInputElement>();
-  let fileError = $state("");
-
-  let contentKind = $derived(item.file ? "FILE" : item.text.length > 0 ? "TEXT" : "EMPTY");
+  let contentKind = $derived(
+    item.file
+      ? item.text.length > 0
+        ? "FILE + TEXT"
+        : "FILE"
+      : item.text.length > 0
+        ? "TEXT"
+        : "EMPTY",
+  );
   let contentTone = $derived(item.file ? "blue" : item.text.length > 0 ? "green" : "foreground2");
-  let fileSelectionDisabled = $derived(disabled || item.text.length > 0);
 
   function updateFile(event: Event): void {
     const input = event.currentTarget as HTMLInputElement;
     const file = input.files?.[0] ?? null;
-    if (file && item.text.length > 0) {
-      fileError = "Clear the text before selecting a file.";
-      input.value = "";
-      return;
-    }
-
-    fileError = "";
     onChange({ ...item, file });
   }
 
   function updateText(event: Event): void {
-    fileError = "";
     onChange({ ...item, text: (event.currentTarget as HTMLTextAreaElement).value });
   }
 
@@ -42,7 +39,6 @@
     if (fileInput) {
       fileInput.value = "";
     }
-    fileError = "";
     onChange({ ...item, file: null });
   }
 </script>
@@ -74,16 +70,16 @@
     </label>
 
     <label is-="column" gap-="1">
-      <span>Paste text</span>
+      <span>{item.file ? "Accompanying text (optional)" : "Paste text"}</span>
       <textarea
         rows="7"
         placeholder="A password, config, certificate, or any other text"
         value={item.text}
         oninput={updateText}
-        disabled={disabled || Boolean(item.file)}></textarea>
+        {disabled}></textarea>
     </label>
 
-    <div is-="separator" variant-="foreground2">OR</div>
+    <div is-="separator" variant-="foreground2">FILE (OPTIONAL)</div>
 
     {#if item.file}
       <div data-file-details is-="row" wrap- align-="center between" gap-="1">
@@ -97,24 +93,20 @@
         </div>
         <button box-="round" type="button" onclick={clearFile} {disabled}>Clear file</button>
       </div>
-    {:else}
-      <label data-file-picker aria-disabled={fileSelectionDisabled}>
-        <input
-          bind:this={fileInput}
-          type="file"
-          onchange={updateFile}
-          disabled={fileSelectionDisabled}
-        />
-        <span is-="button" box-="round" variant-="blue"><Icon name="file" /> Choose file</span>
-        <mark fg-="foreground2">
-          {item.text.length > 0 ? "Clear pasted text to enable files" : "No file selected"}
-        </mark>
-      </label>
     {/if}
-
-    {#if fileError}
-      <mark fg-="red" role="alert">{fileError}</mark>
-    {/if}
+    <label data-file-picker aria-disabled={disabled}>
+      <input
+        bind:this={fileInput}
+        type="file"
+        aria-label={item.file ? "Replace file" : "Choose file"}
+        onchange={updateFile}
+        {disabled}
+      />
+      <span is-="button" box-="round" variant-="blue"
+        ><Icon name="file" /> {item.file ? "Replace file" : "Choose file"}</span
+      >
+      {#if !item.file}<mark fg-="foreground2">No file selected</mark>{/if}
+    </label>
   </div>
 </section>
 
