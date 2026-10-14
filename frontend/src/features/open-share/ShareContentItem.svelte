@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { messages } from "../../shared/i18n/locale";
   import { base64URLToBytes } from "../../shared/crypto/base64url";
   import { decodeText, toArrayBuffer, type EncryptedItem } from "../../shared/crypto/share-crypto";
   import { formatBytes } from "../../shared/format/bytes";
@@ -51,7 +52,8 @@
   <div is-="row" wrap- align-="center between" gap-="1">
     <div is-="row" wrap- align-="center start" gap-="1">
       <span is-="badge" variant-="background0"
-        ><Icon name="file" /> {item.name || `PAYLOAD ${String(index + 1).padStart(2, "0")}`}</span
+        ><Icon name="file" />
+        {item.name || `${$messages.payload} ${String(index + 1).padStart(2, "0")}`}</span
       >
       <span is-="badge" variant-="blue">{item.content_type || "application/octet-stream"}</span>
       <span is-="badge" variant-="background2">{formatBytes(bytes.byteLength)}</span>
@@ -59,56 +61,52 @@
     <div is-="row" wrap- align-="center end" gap-="1">
       <span aria-live="polite">
         {#if copyState === "copied"}<span is-="badge" variant-="green"
-            ><Icon name="check" /> COPIED</span
+            ><Icon name="check" /> {$messages.copied}</span
           >{/if}
       </span>
       {#if isText}
         <button box-="round" type="button" onclick={() => void copy(text)}
-          ><Icon name="copy" /> Copy</button
+          ><Icon name="copy" /> {$messages.copy}</button
         >
       {/if}
       <button box-="round" variant-="blue" type="button" onclick={download}
-        ><Icon name="download" /> Download</button
+        ><Icon name="download" /> {$messages.download}</button
       >
     </div>
   </div>
 
   <div pad-="1" is-="column" gap-="1">
     {#if item.accompanying_text !== undefined}
-      <section is-="column" gap-="1" aria-label="Accompanying text">
+      <section is-="column" gap-="1" aria-label={$messages.accompanyingText}>
         <div is-="row" wrap- align-="center between" gap-="1">
-          <strong>Accompanying text</strong>
+          <strong>{$messages.accompanyingText}</strong>
           <div is-="row" wrap- align-="center end" gap-="1">
             <span aria-live="polite">
               {#if accompanyingCopyState === "copied"}
-                <span is-="badge" variant-="green"><Icon name="check" /> COPIED</span>
+                <span is-="badge" variant-="green"><Icon name="check" /> {$messages.copied}</span>
               {/if}
             </span>
             <button
               box-="round"
               type="button"
               onclick={() => void copy(item.accompanying_text!, "accompanying")}
-              ><Icon name="copy" /> Copy text</button
+              ><Icon name="copy" /> {$messages.copyText}</button
             >
           </div>
         </div>
         {#if accompanyingCopyState === "error"}
-          <mark fg-="red" role="alert"
-            >Clipboard access failed. Select the text and copy it manually.</mark
-          >
+          <mark fg-="red" role="alert">{$messages.clipboardText}</mark>
         {/if}
         <pre>{item.accompanying_text}</pre>
       </section>
     {/if}
     {#if copyState === "error"}
-      <mark fg-="red" role="alert"
-        >Clipboard access failed. Select the content and copy it manually.</mark
-      >
+      <mark fg-="red" role="alert">{$messages.clipboardContent}</mark>
     {/if}
     {#if isText}
       <pre>{text}</pre>
     {:else}
-      <mark fg-="foreground2">Binary payload. Use Download to save it locally.</mark>
+      <mark fg-="foreground2">{$messages.binary}</mark>
     {/if}
   </div>
 </article>

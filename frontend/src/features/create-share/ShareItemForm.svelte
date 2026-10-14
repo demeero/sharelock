@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { messages } from "../../shared/i18n/locale";
   import { formatBytes } from "../../shared/format/bytes";
   import Icon from "../../shared/ui/Icon.svelte";
   import type { DraftItem } from "./types";
@@ -17,11 +18,11 @@
   let contentKind = $derived(
     item.file
       ? item.text.length > 0
-        ? "FILE + TEXT"
-        : "FILE"
+        ? $messages.fileText
+        : $messages.file
       : item.text.length > 0
-        ? "TEXT"
-        : "EMPTY",
+        ? $messages.text
+        : $messages.empty,
   );
   let contentTone = $derived(item.file ? "blue" : item.text.length > 0 ? "green" : "foreground2");
 
@@ -46,19 +47,22 @@
 <section box-="square" shear-="top" is-="column" gap-="1">
   <div is-="row" wrap- align-="center between" gap-="1">
     <div is-="row" wrap- align-="center start" gap-="1">
-      <span is-="badge" variant-="background0">PAYLOAD {String(index + 1).padStart(2, "0")}</span>
+      <span is-="badge" variant-="background0"
+        >{$messages.payload} {String(index + 1).padStart(2, "0")}</span
+      >
       <span is-="badge" variant-={contentTone}>{contentKind}</span>
     </div>
     {#if removable}
       <button box-="round" variant-="red" type="button" onclick={onRemove} {disabled}>
-        <Icon name="trash" /> Remove
+        <Icon name="trash" />
+        {$messages.remove}
       </button>
     {/if}
   </div>
 
   <div pad-="1" is-="column" gap-="1">
     <label is-="column" gap-="1">
-      <span>Name <mark fg-="foreground2">(optional)</mark></span>
+      <span>{$messages.name} <mark fg-="foreground2">{$messages.optional}</mark></span>
       <input
         maxlength="200"
         placeholder="production.env"
@@ -70,16 +74,16 @@
     </label>
 
     <label is-="column" gap-="1">
-      <span>{item.file ? "Accompanying text (optional)" : "Paste text"}</span>
+      <span>{item.file ? $messages.accompanyingOptional : $messages.pasteText}</span>
       <textarea
         rows="7"
-        placeholder="A password, config, certificate, or any other text"
+        placeholder={$messages.textPlaceholder}
         value={item.text}
         oninput={updateText}
         {disabled}></textarea>
     </label>
 
-    <div is-="separator" variant-="foreground2">FILE (OPTIONAL)</div>
+    <div is-="separator" variant-="foreground2">{$messages.fileOptional}</div>
 
     {#if item.file}
       <div data-file-details is-="row" wrap- align-="center between" gap-="1">
@@ -91,21 +95,23 @@
           >
           <span is-="badge" variant-="background2">{formatBytes(item.file.size)}</span>
         </div>
-        <button box-="round" type="button" onclick={clearFile} {disabled}>Clear file</button>
+        <button box-="round" type="button" onclick={clearFile} {disabled}
+          >{$messages.clearFile}</button
+        >
       </div>
     {/if}
     <label data-file-picker aria-disabled={disabled}>
       <input
         bind:this={fileInput}
         type="file"
-        aria-label={item.file ? "Replace file" : "Choose file"}
+        aria-label={item.file ? $messages.replaceFile : $messages.chooseFile}
         onchange={updateFile}
         {disabled}
       />
       <span is-="button" box-="round" variant-="blue"
-        ><Icon name="file" /> {item.file ? "Replace file" : "Choose file"}</span
+        ><Icon name="file" /> {item.file ? $messages.replaceFile : $messages.chooseFile}</span
       >
-      {#if !item.file}<mark fg-="foreground2">No file selected</mark>{/if}
+      {#if !item.file}<mark fg-="foreground2">{$messages.noFile}</mark>{/if}
     </label>
   </div>
 </section>

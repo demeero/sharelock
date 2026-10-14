@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { messages } from "../../shared/i18n/locale";
+  import { errorMessage, LocalizedError } from "../../shared/i18n/errors";
   import { apiClient, apiError } from "../../shared/api/client";
   import {
     decryptItems,
@@ -23,8 +25,8 @@
   let burned = $state(false);
   let viewsLeft = $state<number | null>(null);
   let busy = $state(false);
-  let error = $state("");
-  let errorStatus = $state("UNAVAILABLE");
+  let error = $state<unknown>(null);
+  let errorStatus = $state<"unavailable" | "invalidKey" | "passwordInvalid">("unavailable");
   let passwordAccess = $state<string | null>(null);
   let password = $state("");
   let passwordVisible = $state(false);
@@ -36,13 +38,13 @@
       return;
     }
 
-    error = "";
+    error = null;
     busy = true;
     try {
       const key = fragment.get("k");
       if (!key) {
-        errorStatus = "INVALID KEY";
-        throw new Error("This URL does not contain a decryption key.");
+        errorStatus = "invalidKey";
+        throw new LocalizedError((m) => m.missingKey);
       }
 
       const { data: accessData, error: responseError } = await apiClient.GET(
@@ -50,8 +52,8 @@
         { params: { path: { id: shareID } } },
       );
       if (!accessData) {
-        errorStatus = "UNAVAILABLE";
-        throw apiError(responseError, "This share is unavailable, expired, burned, or revoked.");
+        errorStatus = "unavailable";
+        throw apiError(responseError, new LocalizedError((m) => m.shareUnavailable));
       }
       if (accessData.access_envelope) {
         passwordAccess = accessData.access_envelope;
@@ -60,7 +62,7 @@
 
       await claimAndDecrypt(key);
     } catch (caught) {
-      error = caught instanceof Error ? caught.message : "Could not decrypt this share.";
+      error = caught;
     } finally {
       busy = false;
     }
@@ -71,26 +73,26 @@
       return;
     }
 
-    error = "";
+    error = null;
     busy = true;
     try {
       const key = fragment.get("k");
       if (!key) {
-        errorStatus = "INVALID KEY";
-        throw new Error("This URL does not contain a decryption key.");
+        errorStatus = "invalidKey";
+        throw new LocalizedError((m) => m.missingKey);
       }
 
       let cryptoKey: CryptoKey;
       try {
         cryptoKey = await verifyPassword(passwordAccess, key, password);
       } catch {
-        errorStatus = "PASSWORD INVALID";
-        throw new Error("The password is incorrect or the password verifier is damaged.");
+        errorStatus = "passwordInvalid";
+        throw new LocalizedError((m) => m.incorrectPassword);
       }
       await claimAndDecrypt(key, cryptoKey);
       password = "";
     } catch (caught) {
-      error = caught instanceof Error ? caught.message : "Could not decrypt this share.";
+      error = caught;
     } finally {
       busy = false;
     }
@@ -101,8 +103,8 @@
       params: { path: { id: shareID } },
     });
     if (!data) {
-      errorStatus = "UNAVAILABLE";
-      throw apiError(responseError, "This share is unavailable, expired, burned, or revoked.");
+      errorStatus = "unavailable";
+      throw apiError(responseError, new LocalizedError((m) => m.shareUnavailable));
     }
     try {
       items =
@@ -110,20 +112,20 @@
           ? await decryptItems(data.envelope, key)
           : await decryptPasswordProtectedItems(data.envelope, passwordKey);
     } catch {
-      errorStatus = "INVALID KEY";
-      throw new Error("The decryption key is invalid or the encrypted payload is damaged.");
+      errorStatus = "invalidKey";
+      throw new LocalizedError((m) => m.damagedPayload);
     }
     burned = data.burned;
     viewsLeft = data.views_left;
   }
 
   function requestRevoke(): void {
-    error = "";
+    error = null;
     revokeDialog?.showModal();
   }
 
   function cancelRevoke(): void {
-    error = "";
+    error = null;
     revokeDialog?.close();
   }
 
@@ -132,7 +134,7 @@
       return;
     }
 
-    error = "";
+    error = null;
     busy = true;
     try {
       const { error: responseError } = await apiClient.DELETE("/api/v1/shares/{id}", {
@@ -142,12 +144,12 @@
         },
       });
       if (responseError) {
-        throw apiError(responseError, "This share is already unavailable.");
+        throw apiError(responseError, new LocalizedError((m) => m.alreadyUnavailable));
       }
       revoked = true;
       revokeDialog?.close();
     } catch (caught) {
-      error = caught instanceof Error ? caught.message : "Could not revoke this share.";
+      error = caught;
     } finally {
       busy = false;
     }
@@ -158,32 +160,29 @@
   {#if revokeToken}
     <section box-="square" shear-="top" is-="column" gap-="1">
       <div is-="row" wrap- align-="center between" gap-="1">
-        <span is-="badge" variant-="background0">REVOKE CAPABILITY</span>
-        <span is-="badge" variant-="red"><Icon name="key" /> ADMIN</span>
+        <span is-="badge" variant-="background0">{$messages.revokeCapability}</span>
+        <span is-="badge" variant-="red"><Icon name="key" /> {$messages.admin}</span>
       </div>
 
       <div pad-="2 1" is-="column" gap-="2">
         {#if revoked}
           <Notice
-            status="REVOKED"
+            status={$messages.revoked}
             tone="green"
-            message="The encrypted blob was permanently removed. This share can no longer be opened."
+            message={$messages.revokedMessage}
             recoveryHref="/"
           />
         {:else}
           <div is-="column" gap-="1">
-            <h1>Revoke encrypted share</h1>
+            <h1>{$messages.revokeTitle}</h1>
             <p>
-              This administrative capability permanently removes the encrypted blob from Sharelock.
+              {$messages.revokeIntro}
             </p>
           </div>
-          <Notice
-            status="DANGER"
-            message="Revocation cannot be undone. Confirm the exact share before continuing."
-          />
+          <Notice status={$messages.danger} message={$messages.revokeConfirmWarning} />
           <div is-="row" wrap- align-="center end" gap-="1">
             <button box-="round" variant-="red" type="button" onclick={requestRevoke}
-              ><Icon name="trash" /> Revoke share</button
+              ><Icon name="trash" /> {$messages.revokeShare}</button
             >
           </div>
         {/if}
@@ -197,24 +196,26 @@
       position-="center"
       container-="auto"
       oncancel={() => {
-        error = "";
+        error = null;
       }}
     >
       <div pad-="1" is-="column" gap-="2">
         <div is-="row" wrap- align-="center between" gap-="1">
-          <h2>Confirm permanent revoke</h2>
-          <span is-="badge" variant-="red">IRREVERSIBLE</span>
+          <h2>{$messages.confirmRevoke}</h2>
+          <span is-="badge" variant-="red">{$messages.irreversible}</span>
         </div>
         <p>
-          The ciphertext will be deleted immediately. Recipients will lose access even if they still
-          have the share URL.
+          {$messages.revokeConsequences}
         </p>
         {#if error}
-          <Notice status="REVOKE FAILED" message={error} />
+          <Notice
+            status={$messages.revokeFailed}
+            message={errorMessage(error, $messages, $messages.revokeError)}
+          />
         {/if}
         <div is-="row" wrap- align-="center end" gap-="1">
           <button box-="round" type="button" onclick={cancelRevoke} disabled={busy}
-            >Cancel <span is-="badge" variant-="background2">Esc</span></button
+            >{$messages.cancel} <span is-="badge" variant-="background2">Esc</span></button
           >
           <button
             box-="round"
@@ -223,9 +224,8 @@
             onclick={() => void revoke()}
             disabled={busy}
           >
-            {#if busy}<span is-="spinner" variant-="dots" aria-hidden="true"></span> Revoking…{:else}<Icon
-                name="trash"
-              /> Revoke permanently{/if}
+            {#if busy}<span is-="spinner" variant-="dots" aria-hidden="true"></span>
+              {$messages.revoking}{:else}<Icon name="trash" /> {$messages.revokePermanently}{/if}
           </button>
         </div>
       </div>
@@ -233,32 +233,26 @@
   {:else if items}
     <section box-="square" shear-="top" is-="column" gap-="1">
       <div is-="row" wrap- align-="center between" gap-="1">
-        <span is-="badge" variant-="background0">DECRYPTED</span>
+        <span is-="badge" variant-="background0">{$messages.decrypted}</span>
         <span is-="badge" variant-="green"
-          ><Icon name="check" /> {items.length} {items.length === 1 ? "ITEM" : "ITEMS"}</span
+          ><Icon name="check" /> {$messages.itemCount(items.length)}</span
         >
       </div>
 
       <div pad-="2 1" is-="column" gap-="2">
         <div is-="column" gap-="1">
-          <h1>Decrypted payloads</h1>
+          <h1>{$messages.decryptedTitle}</h1>
           <p>
-            <mark fg-="foreground2"
-              >Plaintext exists only in this browser tab. Save what you need, then close it.</mark
-            >
+            <mark fg-="foreground2">{$messages.plaintextWarning}</mark>
           </p>
         </div>
         {#if burned}
-          <Notice
-            status="BURNED"
-            tone="yellow"
-            message="That was the last allowed open. This share was deleted from the server."
-          />
+          <Notice status={$messages.burned} tone="yellow" message={$messages.burnedMessage} />
         {:else if viewsLeft !== null}
           <Notice
-            status="OPENS LEFT"
+            status={$messages.opensLeft}
             tone="yellow"
-            message={`This share can be opened ${viewsLeft} more ${viewsLeft === 1 ? "time" : "times"} before it is deleted.`}
+            message={$messages.remainingOpens(viewsLeft)}
           />
         {/if}
         <div is-="column" gap-="2">
@@ -271,19 +265,23 @@
   {:else}
     <section box-="square" shear-="top" is-="column" gap-="1">
       <div is-="row" wrap- align-="center between" gap-="1">
-        <span is-="badge" variant-="background0">ENCRYPTED</span>
-        <span is-="badge" variant-="mauve"><Icon name="lock" /> SEALED</span>
+        <span is-="badge" variant-="background0">{$messages.encrypted}</span>
+        <span is-="badge" variant-="mauve"><Icon name="lock" /> {$messages.sealed}</span>
       </div>
 
       <div pad-="2 1" is-="column" gap-="2">
         <div is-="column" gap-="1">
-          <h1>Open encrypted share</h1>
+          <h1>{$messages.openTitle}</h1>
           <p>
-            The server returns ciphertext. The key in this URL decrypts it only inside this browser.
+            {$messages.openIntro}
           </p>
         </div>
         {#if error}
-          <Notice status={errorStatus} message={error} recoveryHref="/" />
+          <Notice
+            status={$messages[errorStatus]}
+            message={errorMessage(error, $messages, $messages.decryptError)}
+            recoveryHref="/"
+          />
         {/if}
         {#if passwordAccess}
           <form
@@ -295,13 +293,10 @@
             }}
           >
             <p>
-              <mark fg-="foreground2"
-                >This share also requires a password. It is verified locally before an open is
-                counted.</mark
-              >
+              <mark fg-="foreground2">{$messages.passwordIntro}</mark>
             </p>
             <label is-="column" gap-="1">
-              <span>Password</span>
+              <span>{$messages.password}</span>
               <input
                 type={passwordVisible ? "text" : "password"}
                 autocomplete="current-password"
@@ -314,12 +309,12 @@
                 box-="round"
                 type="button"
                 onclick={() => (passwordVisible = !passwordVisible)}
-                disabled={busy}>{passwordVisible ? "Hide password" : "Show password"}</button
+                disabled={busy}
+                >{passwordVisible ? $messages.hidePassword : $messages.showPassword}</button
               >
               <button box-="round" variant-="mauve" type="submit" disabled={busy}>
-                {#if busy}<span is-="spinner" variant-="dots" aria-hidden="true"></span> Verifying…{:else}<Icon
-                    name="key"
-                  /> Verify & open{/if}
+                {#if busy}<span is-="spinner" variant-="dots" aria-hidden="true"></span>
+                  {$messages.verifying}{:else}<Icon name="key" /> {$messages.verifyOpen}{/if}
               </button>
             </div>
           </form>
@@ -332,9 +327,8 @@
               onclick={() => void open()}
               disabled={busy}
             >
-              {#if busy}<span is-="spinner" variant-="dots" aria-hidden="true"></span> Preparing…{:else}<Icon
-                  name="key"
-                /> Open & decrypt{/if}
+              {#if busy}<span is-="spinner" variant-="dots" aria-hidden="true"></span>
+                {$messages.preparing}{:else}<Icon name="key" /> {$messages.openDecrypt}{/if}
             </button>
           </div>
         {/if}

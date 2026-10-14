@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { messages } from "../i18n/locale";
   import Icon from "./Icon.svelte";
 
   interface Props {
@@ -25,22 +26,21 @@
     <label for={`copy-field-${label}`}>{label}</label>
     <span aria-live="polite">
       {#if state === "copied"}
-        <span is-="badge" variant-="green"><Icon name="check" /> COPIED</span>
+        <span is-="badge" variant-="green"><Icon name="check" /> {$messages.copied}</span>
       {:else if state === "error"}
-        <span is-="badge" variant-="red">COPY FAILED</span>
+        <span is-="badge" variant-="red">{$messages.copyFailed}</span>
       {/if}
     </span>
   </div>
   <div data-copy-row is-="row" wrap- align-="stretch start" gap-="1">
     <input id={`copy-field-${label}`} readonly {value} />
     <button box-="round" variant-={tone} type="button" onclick={() => void copy()}>
-      <Icon name="copy" /> Copy
+      <Icon name="copy" />
+      {$messages.copy}
     </button>
   </div>
   {#if state === "error"}
-    <mark fg-="red" role="alert"
-      >Clipboard access failed. Select the value and copy it manually.</mark
-    >
+    <mark fg-="red" role="alert">{$messages.clipboardValue}</mark>
   {/if}
 </div>
 
