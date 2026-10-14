@@ -21,6 +21,7 @@ const secretFile: EncryptedFile = {
 };
 
 const payloadBlocks: PayloadBlock[] = [{ file: secretFile }, { text: "Read this first." }];
+const pairedPayloadBlock: PayloadBlock[] = [{ file: secretFile, text: "Read this first." }];
 
 describe("share crypto", () => {
   it("creates version 2 payload blocks for file-only and text-note-only shares", async () => {
@@ -36,8 +37,24 @@ describe("share crypto", () => {
     });
   });
 
-  it("requires both the URL key and password for version 2 payload blocks", async () => {
-    const share = await encryptPayloadBlocks(payloadBlocks, "separate password");
+  it("keeps a file and text note together in an encrypted payload block", async () => {
+    const share = await encryptPayloadBlocks(pairedPayloadBlock);
+    const actualBytes = encoder.encode(share.envelope).byteLength;
+
+    expect(share.envelope).not.toContain(secretFile.name);
+    expect(share.envelope).not.toContain(pairedPayloadBlock[0].text!);
+    expect(encryptedShareByteLength(pairedPayloadBlock)).toBe(actualBytes);
+    await expect(
+      decryptPayloadBlocks(share.envelope, bytesToBase64URL(share.key)),
+    ).resolves.toEqual(pairedPayloadBlock);
+    await expect(decryptUnprotectedManifest(share.envelope, share.key)).resolves.toEqual({
+      version: 2,
+      blocks: pairedPayloadBlock,
+    });
+  });
+
+  it("requires both the URL key and password for a paired payload block", async () => {
+    const share = await encryptPayloadBlocks(pairedPayloadBlock, "separate password");
 
     if (!share.accessEnvelope) {
       throw new Error("expected a password-protected share");
@@ -48,7 +65,7 @@ describe("share crypto", () => {
       "separate password",
     );
     await expect(decryptPasswordProtectedPayloadBlocks(share.envelope, cryptoKey)).resolves.toEqual(
-      payloadBlocks,
+      pairedPayloadBlock,
     );
   });
 
@@ -115,12 +132,12 @@ describe("share crypto", () => {
   });
 
   it("includes version 2 payload blocks and the verifier when estimating password-protected share size", async () => {
-    const share = await encryptPayloadBlocks(payloadBlocks, "separate password");
+    const share = await encryptPayloadBlocks(pairedPayloadBlock, "separate password");
     const actualBytes =
       encoder.encode(share.envelope).byteLength +
       encoder.encode(share.accessEnvelope ?? "").byteLength;
 
-    expect(encryptedShareByteLength(payloadBlocks, "separate password")).toBe(actualBytes);
+    expect(encryptedShareByteLength(pairedPayloadBlock, "separate password")).toBe(actualBytes);
   });
 });
 

@@ -13,13 +13,13 @@
   let copyState = $state<"idle" | "copied" | "error">("idle");
   let file = $derived(payloadBlock.file);
   let bytes = $derived(base64URLToBytes(file?.bytes_base64 ?? ""));
-  let isText = $derived(
-    payloadBlock.text !== undefined || file?.content_type.startsWith("text/") === true,
-  );
-  let text = $derived(payloadBlock.text ?? (isText ? decodeText(bytes) : ""));
+  let note = $derived(payloadBlock.text);
+  let fileIsText = $derived(file?.content_type.startsWith("text/") === true);
+  let fileText = $derived(fileIsText ? decodeText(bytes) : "");
 
   function download(): void {
-    const contents = file === undefined ? new TextEncoder().encode(text) : toArrayBuffer(bytes);
+    const contents =
+      file === undefined ? new TextEncoder().encode(note ?? "") : toArrayBuffer(bytes);
     const blob = new Blob([contents], {
       type: file?.content_type || "text/plain;charset=utf-8",
     });
@@ -31,7 +31,7 @@
     URL.revokeObjectURL(url);
   }
 
-  async function copy(): Promise<void> {
+  async function copy(text: string): Promise<void> {
     try {
       await navigator.clipboard.writeText(text);
       copyState = "copied";
@@ -42,47 +42,74 @@
 </script>
 
 <article box-="square" shear-="top" is-="column" gap-="1">
-  <div is-="row" wrap- align-="center between" gap-="1">
-    <div is-="row" wrap- align-="center start" gap-="1">
-      {#if file}
-        <span is-="badge" variant-="background0"
-          ><Icon name="file" /> {file.name || `PAYLOAD ${String(index + 1).padStart(2, "0")}`}</span
-        >
-        <span is-="badge" variant-="blue">{file.content_type || "application/octet-stream"}</span>
-        <span is-="badge" variant-="background2">{formatBytes(bytes.byteLength)}</span>
-      {:else}
+  {#if note !== undefined}
+    <div pad-="1" is-="column" gap-="1">
+      <div is-="row" wrap- align-="center between" gap-="1">
         <span is-="badge" variant-="background0">TEXT NOTE</span>
-      {/if}
-    </div>
-    <div is-="row" wrap- align-="center end" gap-="1">
-      <span aria-live="polite">
-        {#if copyState === "copied"}<span is-="badge" variant-="green"
-            ><Icon name="check" /> COPIED</span
-          >{/if}
-      </span>
-      {#if isText}
-        <button box-="round" type="button" onclick={() => void copy()}
-          ><Icon name="copy" /> Copy</button
+        <div is-="row" wrap- align-="center end" gap-="1">
+          <span aria-live="polite">
+            {#if copyState === "copied"}<span is-="badge" variant-="green"
+                ><Icon name="check" /> COPIED</span
+              >{/if}
+          </span>
+          <button box-="round" type="button" onclick={() => void copy(note)}
+            ><Icon name="copy" /> Copy</button
+          >
+          {#if !file}
+            <button box-="round" variant-="blue" type="button" onclick={download}
+              ><Icon name="download" /> Download</button
+            >
+          {/if}
+        </div>
+      </div>
+      {#if copyState === "error"}
+        <mark fg-="red" role="alert"
+          >Clipboard access failed. Select the content and copy it manually.</mark
         >
       {/if}
-      <button box-="round" variant-="blue" type="button" onclick={download}
-        ><Icon name="download" /> Download</button
-      >
+      <pre>{note}</pre>
     </div>
-  </div>
+  {/if}
 
-  <div pad-="1" is-="column" gap-="1">
-    {#if copyState === "error"}
-      <mark fg-="red" role="alert"
-        >Clipboard access failed. Select the content and copy it manually.</mark
-      >
-    {/if}
-    {#if isText}
-      <pre>{text}</pre>
-    {:else if file}
-      <mark fg-="foreground2">Binary payload. Use Download to save it locally.</mark>
-    {/if}
-  </div>
+  {#if file}
+    <div pad-="1" is-="column" gap-="1">
+      <div is-="row" wrap- align-="center between" gap-="1">
+        <div is-="row" wrap- align-="center start" gap-="1">
+          <span is-="badge" variant-="background0"
+            ><Icon name="file" />
+            {file.name || `PAYLOAD ${String(index + 1).padStart(2, "0")}`}</span
+          >
+          <span is-="badge" variant-="blue">{file.content_type || "application/octet-stream"}</span>
+          <span is-="badge" variant-="background2">{formatBytes(bytes.byteLength)}</span>
+        </div>
+        <div is-="row" wrap- align-="center end" gap-="1">
+          {#if fileIsText && note === undefined}
+            <span aria-live="polite">
+              {#if copyState === "copied"}<span is-="badge" variant-="green"
+                  ><Icon name="check" /> COPIED</span
+                >{/if}
+            </span>
+            <button box-="round" type="button" onclick={() => void copy(fileText)}
+              ><Icon name="copy" /> Copy</button
+            >
+          {/if}
+          <button box-="round" variant-="blue" type="button" onclick={download}
+            ><Icon name="download" /> Download</button
+          >
+        </div>
+      </div>
+      {#if copyState === "error" && note === undefined}
+        <mark fg-="red" role="alert"
+          >Clipboard access failed. Select the content and copy it manually.</mark
+        >
+      {/if}
+      {#if fileIsText}
+        <pre>{fileText}</pre>
+      {:else}
+        <mark fg-="foreground2">Binary payload. Use Download to save it locally.</mark>
+      {/if}
+    </div>
+  {/if}
 </article>
 
 <style>

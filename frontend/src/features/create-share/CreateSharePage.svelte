@@ -53,7 +53,7 @@
   let totalBytes = $derived(
     items.reduce((total, item) => {
       const textBytes = new TextEncoder().encode(item.text.trim().length > 0 ? item.text : "");
-      return total + (item.file?.size ?? textBytes.byteLength);
+      return total + (item.file?.size ?? 0) + textBytes.byteLength;
     }, 0),
   );
   // Clearing the number input leaves allowedOpens undefined, so the label falls
@@ -206,28 +206,24 @@
     const result: PayloadBlock[] = [];
     for (const [index, item] of items.entries()) {
       const hasText = item.text.trim().length > 0;
-      if (item.file && hasText) {
-        throw new Error(
-          `Payload ${index + 1} contains both text and a file. Clear one before continuing.`,
-        );
-      }
-      if (!item.file && !hasText) {
-        continue;
+      const file = item.file;
+      if (!file && !hasText) {
+        throw new Error(`Payload ${index + 1} must contain a text note, a file, or both.`);
       }
 
-      if (item.file) {
-        const bytes = new Uint8Array(await item.file.arrayBuffer());
-        result.push({
-          file: {
-            name: item.name.trim() || item.file.name || `payload-${index + 1}`,
-            content_type: item.file.type || "application/octet-stream",
-            bytes_base64: bytesToBase64URL(bytes),
-          },
-        });
-        continue;
-      }
-
-      result.push({ text: item.text });
+      const bytes = file ? new Uint8Array(await file.arrayBuffer()) : undefined;
+      result.push({
+        ...(bytes === undefined || file === null
+          ? {}
+          : {
+              file: {
+                name: item.name.trim() || file.name || `payload-${index + 1}`,
+                content_type: file.type || "application/octet-stream",
+                bytes_base64: bytesToBase64URL(bytes),
+              },
+            }),
+        ...(hasText ? { text: item.text } : {}),
+      });
     }
 
     return result;
@@ -334,7 +330,8 @@
           <h1>Create encrypted share</h1>
           <p>
             <mark fg-="foreground2"
-              >Paste text or attach a file. Encryption happens before data leaves this browser.</mark
+              >Add a text note, a file, or both to each payload. Encryption happens before data
+              leaves this browser.</mark
             >
           </p>
           <details is-="accordion">
